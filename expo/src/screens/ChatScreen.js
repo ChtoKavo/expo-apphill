@@ -1,0 +1,5804 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  Dimensions,
+  Modal,
+  Image,
+  PanGestureHandler,
+  Animated,
+  Easing,
+  Keyboard,
+  ActivityIndicator,
+  ScrollView,
+  Switch,
+  Share,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
+import { Video } from 'expo-av';
+import { getOrCreateSocket } from '../services/globalSocket';
+import { messageAPI, mediaAPI, groupAPI, pinnedAPI, userAPI, friendAPI, callAPI, profileAPI } from '../services/api';
+import { showNotificationIfEnabled, NotificationTemplates, NotificationSettings, setActiveChatContext, clearActiveChatContext } from '../services/notifications';
+import { GestureHandlerRootView, PanGestureHandler as RNGHPanGestureHandler } from 'react-native-gesture-handler';
+import { useTheme } from '../contexts/ThemeContext';
+import { useModalAlert } from '../contexts/ModalAlertContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import { VoiceRecorderModal } from '../components/VoiceRecorderModal';
+import { VoiceMessagePlayer } from '../components/VoiceMessagePlayer';
+import { PinnedMessagesBar } from '../components/PinnedMessagesBar';
+import { PinVisibilityModal } from '../components/PinVisibilityModal';
+import { MediaCaptionModal } from '../components/MediaCaptionModal';
+import { audioRecorder } from '../services/audioRecorder';
+import TypingIndicator from '../components/TypingIndicator';
+import MessageCheckmark from '../components/MessageCheckmark';
+import { normalizeMediaUrl, normalizeMessageMediaUrl } from '../services/urlUtils';
+
+const ChatScreen = ({ route, navigation }) => {
+  const { theme, isDark } = useTheme();
+  const { error, warning, info, success } = useModalAlert();
+
+  const API_URL = 'http://151.247.196.66:3001/api';
+
+  // Функция для форматирования времени последнего визита
+  const formatLastSeen = (lastSeenDate) => {
+    if (!lastSeenDate) {
+      // ⭐ ИЗМЕНЕНО: Показываем точное время вместо "никогда не был в сети"
+      return 'недавно';
+    }
+    
+    try {
+      const date = new Date(lastSeenDate);
+      const now = new Date();
+      const diff = now - date;
+      
+      // Различные интервалы времени
+      const minute = 60 * 1000;
+      const hour = minute * 60;
+      const day = hour * 24;
+      const week = day * 7;
+      const month = day * 30;
+      
+      if (diff < minute) {
+        return 'только что';
+      } else if (diff < hour) {
+        const mins = Math.floor(diff / minute);
+        if (mins === 1) return '1 минуту назад';
+        if (mins % 10 === 1 && mins !== 11) return `${mins} минуту назад`;
+        if (mins % 10 >= 2 && mins % 10 <= 4 && (mins % 100 < 10 || mins % 100 >= 20)) return `${mins} минуты назад`;
+        return `${mins} минут назад`;
+      } else if (diff < day) {
+        const hours = Math.floor(diff / hour);
+        if (hours === 1) return 'час назад';
+        if (hours % 10 === 1 && hours !== 11) return `${hours} час назад`;
+        if (hours % 10 >= 2 && hours % 10 <= 4 && (hours % 100 < 10 || hours % 100 >= 20)) return `${hours} часа назад`;
+        return `${hours} часов назад`;
+      } else if (diff < day * 2) {
+        const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        return `вчера в ${time}`;
+      } else if (diff < week) {
+        const days = Math.floor(diff / day);
+        if (days === 2) return '2 дня назад';
+        if (days === 3) return '3 дня назад';
+        if (days === 4) return '4 дня назад';
+        if (days % 10 === 1 && days !== 11) return `${days} день назад`;
+        if (days % 10 >= 2 && days % 10 <= 4 && (days % 100 < 10 || days % 100 >= 20)) return `${days} дня назад`;
+        return `${days} дней назад`;
+      } else if (diff < month) {
+        const weeks = Math.floor(diff / week);
+        if (weeks === 1) return 'неделю назад';
+        if (weeks % 10 === 1 && weeks !== 11) return `${weeks} неделю назад`;
+        if (weeks % 10 >= 2 && weeks % 10 <= 4 && (weeks % 100 < 10 || weeks % 100 >= 20)) return `${weeks} недели назад`;
+        return `${weeks} недель назад`;
+      } else {
+        // ⭐ ИЗМЕНЕНО: Для старых дат показываем точное время (дата + время)
+        const dateStr = date.toLocaleDateString('ru-RU', { month: 'long', day: 'numeric' });
+        const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        return `${dateStr} в ${timeStr}`;
+      }
+    } catch (error) {
+      return 'недавно';
+    }
+  };
+
+  const routeParams = route?.params ?? {};
+  const user = routeParams.user ?? null;
+  const isGroup = routeParams.isGroup ?? false;
+
+  useEffect(() => {
+    if (!user) {
+      navigation?.goBack?.();
+    }
+  }, [user, navigation, routeParams]);
+
+  // 🆕 НОВОЕ: Обработка focusInput из уведомления
+  useEffect(() => {
+    const { focusInput } = routeParams;
+    if (focusInput && newMessageInputRef.current) {
+      setTimeout(() => {
+        newMessageInputRef.current?.focus();
+      }, 300);
+    }
+  }, [routeParams]);
+
+  // 🔧 Сброс статуса печатания при входе на страницу чата
+  useEffect(() => {
+    // Сбрасываем статус при входе
+    setIsUserTyping(false);
+    
+    return () => {
+      // Очищаем таймауты при выходе
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (typingResetTimeoutRef.current) {
+        clearTimeout(typingResetTimeoutRef.current);
+      }
+    };
+  }, [user?.id]); // Только когда меняется чат
+
+  if (!user) {
+    return (
+      <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ fontSize: 16, color: '#999', padding: 24, textAlign: 'center' }}>
+          Не удалось открыть чат: отсутствуют данные пользователя.
+        </Text>
+        <TouchableOpacity
+          onPress={() => navigation?.goBack?.()}
+          style={{ paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#667eea', borderRadius: 12 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Назад</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+  const displayName = (user.username || user.name || 'Группа').toString();
+  const displayAvatar = user.avatar || null;
+  const displayInitial = displayName?.[0]?.toUpperCase?.() || 'G';
+
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [socket, setSocket] = useState(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const profileModalHandlersRef = useRef(null);
+  const [replyToMessage, setReplyToMessage] = useState(null);
+  const [contactOnline, setContactOnline] = useState(() => {
+    if (isGroup) {
+      return true;
+    }
+    if (typeof user?.is_online === 'boolean') {
+      return user.is_online;
+    }
+    return true;
+  });
+  const [lastSeenTime, setLastSeenTime] = useState(user?.last_seen || null);
+  const [isUserActive, setIsUserActive] = useState(true);
+  const [pinnedMessages, setPinnedMessages] = useState([]);
+  const [pinVisibilityModalVisible, setPinVisibilityModalVisible] = useState(false);
+  const [pendingPinMessageId, setPendingPinMessageId] = useState(null);
+  const [messageContextMenu, setMessageContextMenu] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [groupMembers, setGroupMembers] = useState(null);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [addMembersModalVisible, setAddMembersModalVisible] = useState(false);
+  const [availableMembers, setAvailableMembers] = useState([]);
+  const [addMembersLoading, setAddMembersLoading] = useState(false);
+  const [addMembersQuery, setAddMembersQuery] = useState('');
+  const [addingMemberId, setAddingMemberId] = useState(null);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [isUserTyping, setIsUserTyping] = useState(false);
+  const typingTimeoutRef = useRef(null);
+  const typingResetTimeoutRef = useRef(null);
+  const flatListRef = useRef(null);
+  const insets = useSafeAreaInsets();
+  const newMessageInputRef = useRef(null); // 🆕 Ref для TextInput сообщения
+  
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  
+  const [friendStatus, setFriendStatus] = useState('unknown'); // 'friend', 'pending', 'none', 'unknown'
+  const [friendRequestLoading, setFriendRequestLoading] = useState(false);
+  const [callModalVisible, setCallModalVisible] = useState(false);
+  const [callStatus, setCallStatus] = useState('idle'); // 'idle' | 'connecting' | 'ringing' | 'connected' | 'ended' | 'cancelled'
+  const [callType, setCallType] = useState('audio'); // 'audio' | 'video'
+  const [callDuration, setCallDuration] = useState(0);
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [incomingCallModalVisible, setIncomingCallModalVisible] = useState(false);
+  const [currentCallId, setCurrentCallId] = useState(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(true);
+  const [voiceRecorderModalVisible, setVoiceRecorderModalVisible] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceRecordingDuration, setVoiceRecordingDuration] = useState(0);
+  const [chatMenuVisible, setChatMenuVisible] = useState(false);
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [chatBackground, setChatBackground] = useState('default');
+  const voiceRecordingIntervalRef = useRef(null);
+  const isProcessingVoiceRef = useRef(false);
+  const callTimerRef = useRef(null);
+  const callTimeoutsRef = useRef([]);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Анимация пульсации статуса участников
+  const memberStatusPulse = useRef(new Animated.Value(1)).current;
+
+  // Состояние для модали подписи к медиа
+  const [mediaCaptionModalVisible, setMediaCaptionModalVisible] = useState(false);
+  const [pendingMediaUri, setPendingMediaUri] = useState(null);
+  const [pendingMediaType, setPendingMediaType] = useState(null);
+  
+  // Состояние для отслеживания загрузки медиа
+  const [mediaUploadProgress, setMediaUploadProgress] = useState(null); // { uri, progress: 0-100, speed: 'XXX KB/s', timeRemaining: 'XX s', type: 'image'|'video' }
+  const [groupAvatarUpdating, setGroupAvatarUpdating] = useState(false);
+  const [uploadingMediaUri, setUploadingMediaUri] = useState(null);
+  
+  // Состояние для полноэкранного просмотра фото
+  const [fullscreenPhotoVisible, setFullscreenPhotoVisible] = useState(false);
+  const [selectedPhotoUri, setSelectedPhotoUri] = useState(null);
+  
+  // ✏️ РЕДАКТИРОВАНИЕ СООБЩЕНИЯ
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  
+  // 🎥 ОШИБКИ ЗАГРУЗКИ ВИДЕО
+  const [videoLoadErrors, setVideoLoadErrors] = useState({});
+
+  useEffect(() => {
+    if (!isGroup && typeof user?.is_online === 'boolean') {
+      setContactOnline(user.is_online);
+      if (user?.last_seen) {
+        setLastSeenTime(user.last_seen);
+      }
+    }
+  }, [isGroup, user?.is_online, user?.last_seen]);
+
+  const clearCallTimers = useCallback(() => {
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+    if (Array.isArray(callTimeoutsRef.current)) {
+      callTimeoutsRef.current.forEach(timeoutId => clearTimeout(timeoutId));
+    }
+    callTimeoutsRef.current = [];
+  }, []);
+
+  const scheduleCallTimeout = useCallback((callback, delay) => {
+    const timeoutId = setTimeout(() => {
+      callback();
+      callTimeoutsRef.current = callTimeoutsRef.current.filter(id => id !== timeoutId);
+    }, delay);
+    callTimeoutsRef.current = [...callTimeoutsRef.current, timeoutId];
+    return timeoutId;
+  }, []);
+
+  const formatCallDuration = useCallback((totalSeconds) => {
+    const minutes = Math.floor(totalSeconds / 60)
+      .toString()
+      .padStart(2, '0');
+    const seconds = Math.floor(totalSeconds % 60)
+      .toString()
+      .padStart(2, '0');
+    return `${minutes}:${seconds}`;
+  }, []);
+
+  useEffect(() => {
+    loadChatBackground();
+  }, []);
+
+  const loadChatBackground = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const response = await fetch('http://151.247.196.66:3001/api/user/preferences', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      setChatBackground(data.chat_background || 'default');
+    } catch (err) {
+      setChatBackground('default');
+    }
+  };
+
+  useEffect(() => {
+    // Анимация контейнера при появлении/исчезновении клавиатуры
+    let keyboardShowSubscription;
+    let keyboardHideSubscription;
+
+    const onKeyboardShow = (e) => {
+      const kb = (e && e.endCoordinates && e.endCoordinates.height) || 0;
+      setKeyboardHeight(kb);
+      setKeyboardVisible(true);
+    };
+
+    const onKeyboardHide = () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    };
+
+    if (Platform.OS === 'android') {
+      keyboardShowSubscription = Keyboard.addListener('keyboardDidShow', onKeyboardShow);
+      keyboardHideSubscription = Keyboard.addListener('keyboardDidHide', onKeyboardHide);
+    } else {
+      keyboardShowSubscription = Keyboard.addListener('keyboardWillShow', onKeyboardShow);
+      keyboardHideSubscription = Keyboard.addListener('keyboardWillHide', onKeyboardHide);
+    }
+
+    return () => {
+      keyboardShowSubscription?.remove();
+      keyboardHideSubscription?.remove();
+    };
+  }, []);
+
+  // Анимация пульса для индикатора записи голоса
+  useEffect(() => {
+    if (isRecordingVoice) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.3,
+            duration: 600,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 600,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isRecordingVoice, pulseAnim]);
+
+  const normalizeGroupMember = useCallback((member) => ({
+    id: member.id,
+    username: (member.username || member.name || 'Пользователь').toString(),
+    avatar: member.avatar || null,
+    role: member.role || 'member',
+    is_online: !!member.is_online,
+  }), []);
+
+  const fetchGroupMembers = useCallback(async ({ silent = false, skipSpinner = false } = {}) => {
+    if (!isGroup) return [];
+    if (!skipSpinner) setMembersLoading(true);
+    try {
+      const response = await groupAPI.getGroupMembers(user.id);
+      const membersArray = Array.isArray(response.data) ? response.data : [];
+      const normalized = membersArray
+        .filter(item => item && typeof item === 'object')
+        .map(normalizeGroupMember);
+      setGroupMembers(normalized);
+      return normalized;
+    } catch (err) {
+      if (!silent) {
+        error('Ошибка', 'Не удалось загрузить участников группы');
+      }
+      return [];
+    } finally {
+      if (!skipSpinner) setMembersLoading(false);
+    }
+  }, [error, isGroup, normalizeGroupMember, user.id]);
+
+  useEffect(() => {
+    if (isGroup) {
+      fetchGroupMembers({ silent: true, skipSpinner: true });
+    }
+  }, [fetchGroupMembers, isGroup]);
+
+  const memberCount = isGroup
+    ? (Array.isArray(groupMembers) && groupMembers.length > 0 ? groupMembers.length : (user.member_count || 0))
+    : 0;
+
+  const refreshGroupMembers = useCallback(() => {
+    fetchGroupMembers({ silent: true });
+  }, [fetchGroupMembers]);
+
+  const refreshGroupMembersStatus = useCallback(async () => {
+    if (!isGroup || !user?.id) return;
+    try {
+      // Используем существующий endpoint для загрузки участников с их статусом
+      const response = await groupAPI.getGroupMembers(user.id);
+      const membersArray = Array.isArray(response.data) ? response.data : [];
+      const normalized = membersArray
+        .filter(item => item && typeof item === 'object')
+        .map(normalizeGroupMember);
+
+      // Обновляем состояние с актуальными данными статуса
+      setGroupMembers(normalized);
+    } catch (err) {
+    }
+  }, [isGroup, user?.id, normalizeGroupMember]);
+
+  const toggleNotifications = useCallback(async (value) => {
+    setNotificationsEnabled(value);
+    try {
+      const currentSettings = await NotificationSettings.getSettings();
+      await NotificationSettings.updateSettings({
+        ...currentSettings,
+        messages: value,
+      });
+    } catch (err) {
+      setNotificationsEnabled(prev => !prev);
+    }
+  }, []);
+
+  const handleSendFriendRequest = useCallback(async () => {
+    if (friendStatus !== 'none' || !user?.id) return;
+    setFriendRequestLoading(true);
+    try {
+      await friendAPI.sendFriendRequest(user.id);
+      setFriendStatus('pending');
+      info('Заявка отправлена', 'Пользователь получит уведомление о вашей заявке.');
+    } catch (err) {
+      const errorMessage = err.response?.data?.error || 'Не удалось отправить заявку. Попробуйте позже.';
+      error('Ошибка', errorMessage);
+    } finally {
+      setFriendRequestLoading(false);
+    }
+  }, [error, friendStatus, info, user?.id]);
+
+  const openUserProfileScreen = useCallback(async () => {
+    if (!user) return;
+    setShowProfileModal(false);
+    
+    try {
+      // 📌 Загружаем полные данные пользователя для получения cardColor
+      const response = await profileAPI.getUserProfile(user.id);
+      const enrichedUser = {
+        ...user,
+        ...response.data,
+        cardColor: response.data?.cardColor || user.cardColor || '#FF6B6B',
+      };
+      navigation.navigate('UserProfile', { user: enrichedUser });
+    } catch (err) {
+      // Fallback - используем текущие данные
+      const userWithFallbackColor = { ...user, cardColor: user.cardColor || '#FF6B6B' };
+      navigation.navigate('UserProfile', { user: userWithFallbackColor });
+    }
+  }, [navigation, user]);
+
+  const openAddMembersModal = useCallback(async () => {
+    if (!isGroup) return;
+    setAddMembersModalVisible(true);
+    setAddMembersQuery('');
+    setAddMembersLoading(true);
+    try {
+      const currentMembers = await fetchGroupMembers({ silent: true, skipSpinner: true });
+      const memberIds = new Set(currentMembers.map(member => member.id));
+      const friendsResponse = await friendAPI.getFriends();
+      const rawFriends = Array.isArray(friendsResponse.data) ? friendsResponse.data : [];
+      const normalizedFriends = rawFriends
+        .filter(friend => friend && typeof friend === 'object')
+        .map(friend => ({
+          id: friend.id,
+          username: (friend.username || friend.name || 'Пользователь').toString(),
+          avatar: friend.avatar || null,
+          status: friend.status || 'accepted',
+        }))
+        .filter(friend => friend.status === 'accepted' && !memberIds.has(friend.id));
+      setAvailableMembers(normalizedFriends);
+    } catch (err) {
+      error('Ошибка', 'Не удалось загрузить список друзей для добавления.');
+    } finally {
+      setAddMembersLoading(false);
+    }
+  }, [error, fetchGroupMembers, isGroup]);
+
+  const closeAddMembersModal = useCallback(() => {
+    setAddMembersModalVisible(false);
+    setAvailableMembers([]);
+    setAddMembersQuery('');
+  }, []);
+
+  const handleAddMember = useCallback(async (candidate) => {
+    if (!candidate || addingMemberId) return;
+    setAddingMemberId(candidate.id);
+    try {
+      await groupAPI.addGroupMember(user.id, candidate.id);
+      setGroupMembers(prev => {
+        const prevList = Array.isArray(prev) ? prev : [];
+        if (prevList.some(member => member.id === candidate.id)) return prevList;
+        return [...prevList, { ...candidate, role: 'member' }];
+      });
+      setAvailableMembers(prev => prev.filter(item => item.id !== candidate.id));
+    } catch (err) {
+      error('Ошибка', 'Не удалось добавить участника. Попробуйте позже.');
+    } finally {
+      setAddingMemberId(null);
+    }
+  }, [addingMemberId, error, user.id]);
+
+  const handleRemoveMember = useCallback(async (memberId, memberName) => {
+    info(
+      'Удалить участника?',
+      `Вы уверены, что хотите удалить ${memberName} из группы?`,
+      {
+        buttons: [
+          { text: 'Отмена', color: '#ccc' },
+          {
+            text: 'Удалить',
+            color: '#FF6B6B',
+            onPress: async () => {
+              try {
+                await groupAPI.removeGroupMember(user.id, memberId);
+                setGroupMembers(prev => 
+                  Array.isArray(prev) 
+                    ? prev.filter(member => member.id !== memberId)
+                    : []
+                );
+                success('Готово', `${memberName} удален из группы`);
+              } catch (err) {
+                error('Ошибка', 'Не удалось удалить участника. Попробуйте позже.');
+              }
+            }
+          }
+        ],
+        autoClose: false
+      }
+    );
+  }, [info, error, success, user.id]);
+
+  const updateMemberOnlineStatus = useCallback((memberId, isOnline) => {
+    setGroupMembers(prev => {
+      if (!Array.isArray(prev)) return prev;
+      return prev.map(member => 
+        member.id === memberId 
+          ? { ...member, is_online: isOnline }
+          : member
+      );
+    });
+    
+    // Пульсирующий эффект при изменении статуса
+    memberStatusPulse.setValue(0.7);
+    Animated.timing(memberStatusPulse, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [memberStatusPulse]);
+
+  useEffect(() => {
+    loadCurrentUser();
+  }, []);
+
+  // useEffect для управления Socket обработчиками при открытии/закрытии профиля группы
+  useEffect(() => {
+    if (!isGroup || !socket || !showProfileModal) {
+      // Очищаем обработчики когда профиль закрыт или это не группа
+      if (profileModalHandlersRef.current) {
+        profileModalHandlersRef.current.forEach(unsub => {
+          try {
+            unsub && unsub();
+          } catch (e) {
+          }
+        });
+        profileModalHandlersRef.current = null;
+      }
+      return;
+    }
+
+    // Регистрируем обработчики для обновления статуса участников
+    const handlers = [];
+
+    try {
+      const handleGroupMemberStatusChange = (data) => {
+        const memberId = data?.user_id || data?.id;
+        const isOnline = data?.is_online !== false && data?.status !== 'offline';
+        
+        if (memberId) {
+          updateMemberOnlineStatus(memberId, isOnline);
+        }
+      };
+
+      const handleUserOnlineInGroup = (data) => {
+        const memberId = data?.user_id || data?.id;
+        if (memberId) {
+          updateMemberOnlineStatus(memberId, true);
+        }
+      };
+
+      const handleUserOfflineInGroup = (data) => {
+        const memberId = data?.user_id || data?.id;
+        if (memberId) {
+          updateMemberOnlineStatus(memberId, false);
+        }
+      };
+
+      // Регистрируем обработчики
+      socket.on('user_status_changed', handleGroupMemberStatusChange);
+      socket.on('user_online', handleUserOnlineInGroup);
+      socket.on('user_offline', handleUserOfflineInGroup);
+      socket.on('group_member_status_updated', handleGroupMemberStatusChange);
+
+      handlers.push(() => socket.off('user_status_changed', handleGroupMemberStatusChange));
+      handlers.push(() => socket.off('user_online', handleUserOnlineInGroup));
+      handlers.push(() => socket.off('user_offline', handleUserOfflineInGroup));
+      handlers.push(() => socket.off('group_member_status_updated', handleGroupMemberStatusChange));
+
+      profileModalHandlersRef.current = handlers;
+
+      // Запрашиваем актуальный статус членов группы при открытии профиля
+      if (isGroup) {
+        // Сразу загружаем статус из API
+        refreshGroupMembersStatus();
+        
+        // Отправляем запрос статуса на сервер через Socket
+        socket.emit('request_group_members_status', { group_id: user.id });
+      }
+    } catch (error) {
+    }
+
+    return () => {
+      handlers.forEach(unsub => {
+        try {
+          unsub && unsub();
+        } catch (e) {
+        }
+      });
+      profileModalHandlersRef.current = null;
+    };
+  }, [isGroup, socket, showProfileModal, updateMemberOnlineStatus, refreshGroupMembersStatus, user.id]);
+
+  useEffect(() => {
+    const loadNotificationPreference = async () => {
+      setNotificationsLoading(true);
+      try {
+        const settings = await NotificationSettings.getSettings();
+        setNotificationsEnabled(settings.messages !== false);
+      } catch (err) {
+      } finally {
+        setNotificationsLoading(false);
+      }
+    };
+
+    loadNotificationPreference();
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadFriendStatus = async () => {
+      if (isGroup || !user?.id) {
+        if (isMounted) setFriendStatus('none');
+        return;
+      }
+
+      try {
+        const response = await friendAPI.getFriends();
+        const friendsList = Array.isArray(response.data) ? response.data : [];
+        const matched = friendsList.find(item => String(item.id) === String(user.id));
+        if (!isMounted) return;
+        if (!matched) {
+          setFriendStatus('none');
+        } else if (matched.status === 'accepted') {
+          setFriendStatus('friend');
+        } else {
+          setFriendStatus('pending');
+        }
+      } catch (err) {
+        if (isMounted) setFriendStatus('none');
+      }
+    };
+
+    loadFriendStatus();
+    return () => {
+      isMounted = false;
+    };
+  }, [isGroup, user?.id]);
+
+  useEffect(() => {
+    if (!isGroup) {
+      if (typeof user?.is_online === 'boolean') {
+        setContactOnline(user.is_online);
+      }
+    }
+  }, [isGroup, user?.is_online]);
+
+  useEffect(() => {
+    // ✅ ИСПРАВЛЕНИЕ: Отслеживаем фокус экрана и устанавливаем активный чат
+    const { setActiveChatContext, clearActiveChatContext } = require('../services/notifications');
+    
+    const unsubscribe = navigation.addListener('focus', () => {
+      setIsUserActive(true);
+      // 📍 Устанавливаем этот чат как активный для подавления уведомлений
+      setActiveChatContext(user.id, isGroup ? 'group' : 'personal');
+      
+      // 🆕 ОТПРАВЛЯЕМ НА СЕРВЕР информацию об активном чате
+      (async () => {
+        try {
+          const { getOrCreateSocket } = require('../services/globalSocket');
+          const socketInstance = await getOrCreateSocket();
+          if (socketInstance && socketInstance.connected) {
+            socketInstance.emit('set_active_chat', {
+              chat_id: user.id,
+              chat_type: isGroup ? 'group' : 'personal',
+              timestamp: new Date().toISOString()
+            });
+          } else {
+          }
+        } catch (err) {
+        }
+      })();
+    });
+
+    const unsubscribeBlur = navigation.addListener('blur', () => {
+      setIsUserActive(false);
+      // ❌ Очищаем активный чат при выходе
+      clearActiveChatContext();
+      
+      // 🆕 ОТПРАВЛЯЕМ НА СЕРВЕР что вышли из чата
+      (async () => {
+        try {
+          const { getOrCreateSocket } = require('../services/globalSocket');
+          const socketInstance = await getOrCreateSocket();
+          if (socketInstance && socketInstance.connected) {
+            socketInstance.emit('clear_active_chat', {
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+        }
+      })();
+    });
+
+    return () => {
+      unsubscribe?.();
+      unsubscribeBlur?.();
+      clearActiveChatContext(); // Очищаем при размонтировании
+    };
+  }, [navigation, user.id, isGroup]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+
+    loadMessages();
+    loadPinnedMessages();
+    loadUnreadCount();
+
+    const visitKey = isGroup ? `group_visit_${user.id}` : `chat_visit_${user.id}`;
+    AsyncStorage.setItem(visitKey, new Date().toISOString()).catch(err => {
+    });
+
+    if (!isGroup) {
+      userAPI.getUserStatus(user.id)
+        .then(response => {
+          setContactOnline(response.data?.is_online ?? true);
+          if (response.data?.last_seen) {
+            setLastSeenTime(response.data.last_seen);
+          }
+        })
+        .catch(err => {
+          if (err.response?.status === 404) {
+            setContactOnline(true);
+          } else {
+          }
+        });
+    }
+
+    let isMounted = true;
+    let socketConnection = null;
+    const detachments = [];
+
+    const registerHandler = (event, handler) => {
+      if (!socketConnection) return;
+      socketConnection.on(event, handler);
+      detachments.push(() => socketConnection.off(event, handler));
+    };
+
+    const initializeSocket = async () => {
+      try {
+        const sharedSocket = await getOrCreateSocket();
+        if (!isMounted) return;
+
+        socketConnection = sharedSocket;
+        setSocket(sharedSocket);
+        
+        // 🔍 ДИАГНОСТИКА СОКЕТА
+
+        // ✅ ДИАГНОСТИКА: Слушаем все события на этом экране
+        sharedSocket.onAny((eventName, ...args) => {
+          if (eventName.includes('read') || eventName.includes('status') || eventName.includes('message')) {
+          }
+        });
+
+        const handleConnect = () => {
+          
+          // 🔑 КРИТИЧНО: Первый шаг - аутентификация
+          if (currentUser?.id) {
+            sharedSocket.emit('authenticate_socket', { user_id: currentUser.id });
+            
+            // Отправляем статус "онлайн" для текущего пользователя
+            sharedSocket.emit('user_status', { 
+              user_id: currentUser.id, 
+              is_online: true,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          // 🔑 КРИТИЧНО: Второй шаг - присоединяемся к комнате ПОСЛЕ аутентификации
+          // ⏰ Небольшая задержка чтобы убедиться что аутентификация обработана
+          setTimeout(() => {
+            if (isGroup) {
+              sharedSocket.emit('join_group_room', user.id);
+            } else {
+              // ✅ КРИТИЧНОЕ: Присоединяемся к личной комнате
+              sharedSocket.emit('join_personal_room', user.id);
+              
+              sharedSocket.emit('subscribe_user_status', user.id);
+            }
+          }, 100); // Задержка 100ms для гарантии обработки аутентификации
+          
+          // ✅ Отправляем серверу что пользователь открыл чат
+          sharedSocket.emit('set_active_chat', {
+            chat_id: user.id,
+            chat_type: isGroup ? 'group' : 'personal',
+            timestamp: new Date().toISOString()
+          });
+        };
+
+        const handleDisconnect = () => {
+          
+          // ✅ Очищаем активный чат при отключении
+          if (currentUser?.id) {
+            try {
+              socketConnection.emit('clear_active_chat');
+            } catch (err) {
+            }
+          }
+          
+          // Отправляем статус "офлайн" перед отключением
+          if (currentUser?.id) {
+            try {
+              socketConnection.emit('user_status', { 
+                user_id: currentUser.id, 
+                is_online: false,
+                timestamp: new Date().toISOString()
+              });
+            } catch (err) {
+            }
+          }
+        };
+
+        registerHandler('connect', handleConnect);
+        registerHandler('disconnect', handleDisconnect);
+
+        const extractUserId = (payload) => {
+          if (payload === undefined || payload === null) return undefined;
+          if (typeof payload === 'object') {
+            return payload.userId ?? payload.user_id ?? payload.id;
+          }
+          return payload;
+        };
+
+        const resolveStatus = (payload, fallback) => {
+          if (typeof fallback === 'boolean') return fallback;
+          if (payload && typeof payload === 'object') {
+            if (typeof payload.is_online === 'boolean') return payload.is_online;
+            if (typeof payload.online === 'boolean') return payload.online;
+            if (typeof payload.status === 'string') {
+              const normalized = payload.status.trim().toLowerCase();
+              if (['online', 'в сети', 'on', '1'].includes(normalized)) return true;
+              if (['offline', 'оффлайн', 'off', '0', 'не в сети'].includes(normalized)) return false;
+            }
+          }
+          return undefined;
+        };
+
+        const handleStatusEvent = (payload, fallback) => {
+          if (isGroup) {
+            return;
+          }
+          const targetId = extractUserId(payload);
+          if (targetId === undefined || String(targetId) !== String(user.id)) {
+            return;
+          }
+          const statusValue = resolveStatus(payload, fallback);
+          if (typeof statusValue === 'boolean') {
+            setContactOnline(statusValue);
+            
+            // Если пользователь перешел в оффлайн, сохраняем время последнего визита
+            if (!statusValue && payload.timestamp) {
+              setLastSeenTime(payload.timestamp);
+            }
+          }
+        };
+
+        const handleUserStatusChanged = (data) => handleStatusEvent(data);
+        const handleUserStatusUpdated = (data) => handleStatusEvent(data);
+        const handleUserOnline = (data) => handleStatusEvent(data, true);
+        const handleUserOffline = (data) => handleStatusEvent(data, false);
+
+        // ⭐ НОВЫЙ ОБРАБОТЧИК: Обновление last_seen в реальном времени
+        const handleUserLastSeenUpdated = (data) => {
+          if (isGroup) {
+            return;
+          }
+          
+          const targetId = data?.user_id;
+          if (targetId === undefined || String(targetId) !== String(user.id)) {
+            return;
+          }
+          
+          if (data?.timestamp) {
+            setLastSeenTime(data.timestamp);
+          }
+        };
+
+        registerHandler('user_status_changed', handleUserStatusChanged);
+        registerHandler('user_status_updated', handleUserStatusUpdated);
+        registerHandler('user_online', handleUserOnline);
+        registerHandler('user_offline', handleUserOffline);
+        registerHandler('user_last_seen_updated', handleUserLastSeenUpdated); // ⭐ НОВОЕ
+
+        // Обработчик для обновления статуса членов группы
+        if (isGroup) {
+          const handleGroupMemberOnline = (data) => {
+            const memberId = data?.user_id || data?.id;
+            if (memberId) {
+              updateMemberOnlineStatus(memberId, true);
+            }
+          };
+
+          const handleGroupMemberOffline = (data) => {
+            const memberId = data?.user_id || data?.id;
+            if (memberId) {
+              updateMemberOnlineStatus(memberId, false);
+            }
+          };
+
+          registerHandler('group_member_online', handleGroupMemberOnline);
+          registerHandler('group_member_offline', handleGroupMemberOffline);
+        }
+
+        const handleNewMessage = (message) => {
+
+          let isForThisChat = false;
+          if (isGroup) {
+            isForThisChat = message.group_id === user.id;
+          } else {
+            isForThisChat =
+              (message.sender_id === user.id && message.receiver_id === currentUser.id) ||
+              (message.sender_id === currentUser.id && message.receiver_id === user.id);
+          }
+
+          if (isForThisChat) {
+            setMessages(prev => {
+              // ⭐ Исправляем IP в URL перед добавлением сообщения
+              const normalizedMessage = normalizeMessageMediaUrl(message);
+              
+              const exists = prev.some(msg => msg.id === normalizedMessage.id);
+              if (exists) {
+                return prev;
+              }
+              
+
+              if (normalizedMessage.sender_id !== currentUser.id) {
+                const senderName = isGroup ? (normalizedMessage.sender_username || displayName) : displayName;
+                const template = NotificationTemplates.newMessage(senderName, normalizedMessage.message);
+                showNotificationIfEnabled(template, {
+                  chatId: user.id,
+                  messageId: normalizedMessage.id,
+                  isGroup
+                });
+                setTimeout(() => scrollToBottom(), 100);
+                
+                // Отмечаем входящее сообщение как прочитанное
+                if (!isGroup) {
+                  markMessageAsRead(normalizedMessage.id);
+                }
+              }
+
+              return [...prev, normalizedMessage];
+            });
+          } else {
+          }
+        };
+
+        // ✅ ИСПРАВЛЕНИЕ: Регистрируем ОБА обработчика ВСЕГДА
+        registerHandler('new_group_message', handleNewMessage);
+        registerHandler('new_message', handleNewMessage);
+
+        // 🔴 КРИТИЧНА ДИАГНОСТИКА: Слушаем напрямую на сокете для отладки
+        if (sharedSocket && isGroup) {
+          
+          sharedSocket.on('new_group_message', (data) => {
+          });
+
+          sharedSocket.on('message_read_status_updated', (data) => {
+          });
+        }
+
+        if (!isGroup) {
+          const handleTyping = (data) => {
+            // ✅ КРИТИЧНО: Проверяем что событие ОТ собеседника в ЭТОМ чате
+            if (data.from_user_id !== user.id) {
+              return;
+            }
+            
+            
+            if (data.is_typing) {
+              setIsUserTyping(true);
+              // Очищаем предыдущий таймаут сброса если он был
+              if (typingResetTimeoutRef.current) {
+                clearTimeout(typingResetTimeoutRef.current);
+              }
+              // Устанавливаем таймаут для автоматического сброса статуса через 5 секунд
+              typingResetTimeoutRef.current = setTimeout(() => {
+                setIsUserTyping(false);
+              }, 5000);
+            } else {
+              setIsUserTyping(false);
+              if (typingResetTimeoutRef.current) {
+                clearTimeout(typingResetTimeoutRef.current);
+              }
+            }
+          };
+          registerHandler('user_typing', handleTyping);
+        } else {
+          const handleGroupTyping = (data) => {
+            if (data.group_id === user.id && data.user_id !== currentUser?.id) {
+              if (data.is_typing) {
+                setIsUserTyping(true);
+                // Очищаем предыдущий таймаут сброса если он был
+                if (typingResetTimeoutRef.current) {
+                  clearTimeout(typingResetTimeoutRef.current);
+                }
+                // Устанавливаем таймаут для автоматического сброса статуса через 5 секунд
+                typingResetTimeoutRef.current = setTimeout(() => {
+                  setIsUserTyping(false);
+                }, 5000);
+              } else {
+                setIsUserTyping(false);
+                if (typingResetTimeoutRef.current) {
+                  clearTimeout(typingResetTimeoutRef.current);
+                }
+              }
+            }
+          };
+          registerHandler('group_user_typing', handleGroupTyping);
+        }
+
+        if (!isGroup) {
+          const handleIncomingCall = (data) => {
+            if (data.receiver_id === currentUser?.id && data.caller_id !== currentUser?.id) {
+              setIncomingCall(data);
+              setIncomingCallModalVisible(true);
+            } else if (data.caller_id === currentUser?.id) {
+              setCurrentCallId(data.call_id);
+              setCallStatus('ringing');
+            }
+          };
+
+          const handleCallResponse = (data) => {
+            if (data.status === 'accepted') {
+              setCallStatus('connected');
+            } else if (data.status === 'rejected') {
+              setCallStatus('ended');
+              setIncomingCallModalVisible(false);
+            }
+          };
+
+          const handleCallEnded = (data) => {
+            setCallStatus('ended');
+            setIncomingCallModalVisible(false);
+            if (data.duration) {
+              const minutes = Math.floor(data.duration / 60);
+              const seconds = data.duration % 60;
+              success('Звонок завершен', `Длительность: ${minutes}м ${seconds}с`);
+            }
+          };
+
+          registerHandler('incoming_call', handleIncomingCall);
+          registerHandler('call_response', handleCallResponse);
+          registerHandler('call_ended', handleCallEnded);
+        }
+
+        // Регистрируем обработчик статуса чтения сообщений (для всех чатов)
+        registerHandler('message_read_status_updated', handleMessageReadStatusUpdated);
+
+        // 📌 НОВОЕ: Обработчик синхронизации закреплённых сообщений
+        const handleMessagePinned = (data) => {
+          const { message_id, is_pinned, pinned_by_user_id, initiator_id } = data;
+          
+          // Проверяем что это событие для нашего чата
+          let isForThisChat = false;
+          if (!isGroup) {
+            // Для личного чата - проверяем что это между нами
+            isForThisChat = 
+              (initiator_id === currentUser?.id && data.other_user_id === user.id) ||
+              (initiator_id === user.id && data.other_user_id === currentUser?.id) ||
+              (pinned_by_user_id === currentUser?.id) ||
+              (pinned_by_user_id === user.id);
+          } else {
+            // Для группы
+            isForThisChat = data.group_id === user.id;
+          }
+          
+          if (!isForThisChat) {
+            return;
+          }
+          
+          // Обновляем pinnedMessages
+          setPinnedMessages(prev => {
+            const updated = [...prev];
+            if (is_pinned && !updated.includes(message_id)) {
+              updated.push(message_id);
+            } else if (!is_pinned) {
+              const idx = updated.indexOf(message_id);
+              if (idx > -1) {
+                updated.splice(idx, 1);
+              }
+            }
+            return updated;
+          });
+        };
+        
+        registerHandler('message_pinned', handleMessagePinned);
+
+        // ✅ ОБРАБОТЧИК: Получение событий закрепления/открепления сообщений
+        const handleMessagePinToggle = (data) => {
+          console.log('📌 [DEBUG] Получено событие message_pin_toggle:', data);
+          
+          const { message_id, is_pinned, chat_type } = data;
+          
+          // Обновляем pinnedMessages в зависимости от типа чата
+          if (chat_type === 'personal') {
+            // Для личного чата обновляем pinnedMessages стейт
+            setPinnedMessages(prevPinned => {
+              const newPinned = [...prevPinned];
+              
+              if (is_pinned) {
+                // Добавляем в закрепленные
+                if (!newPinned.includes(message_id)) {
+                  newPinned.push(message_id);
+                  console.log('📌 [DEBUG] Сообщение закреплено:', message_id);
+                }
+              } else {
+                // Удаляем из закрепленных
+                const idx = newPinned.indexOf(message_id);
+                if (idx > -1) {
+                  newPinned.splice(idx, 1);
+                  console.log('📌 [DEBUG] Сообщение открепилось:', message_id);
+                }
+              }
+              
+              return newPinned;
+            });
+          } else if (chat_type === 'group') {
+            // Для группового чата
+            setPinnedMessages(prevPinned => {
+              const newPinned = [...prevPinned];
+              
+              if (is_pinned) {
+                if (!newPinned.includes(message_id)) {
+                  newPinned.push(message_id);
+                  console.log('📌 [DEBUG] Групповое сообщение закреплено:', message_id);
+                }
+              } else {
+                const idx = newPinned.indexOf(message_id);
+                if (idx > -1) {
+                  newPinned.splice(idx, 1);
+                  console.log('📌 [DEBUG] Групповое сообщение открепилось:', message_id);
+                }
+              }
+              
+              return newPinned;
+            });
+          }
+        };
+        
+        registerHandler('message_pin_toggle', handleMessagePinToggle);
+
+        // ✅ ОБРАБОТЧИК: Получение события удаления сообщения
+        const handleMessageDeleted = (data) => {
+          console.log('🗑️ [DEBUG] Получено событие message_deleted:', data);
+          
+          const { message_id, chat_type } = data;
+          
+          // Проверяем что это сообщение из нашего чата
+          const messageExists = messages.some(msg => msg.id === message_id);
+          if (!messageExists) {
+            console.log('🗑️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+            return;
+          }
+          
+          // Удаляем сообщение из списка
+          setMessages(prevMessages => {
+            const filtered = prevMessages.filter(msg => msg.id !== message_id);
+            console.log('🗑️ [DEBUG] Сообщение удалено:', message_id);
+            return filtered;
+          });
+        };
+        
+        registerHandler('message_deleted', handleMessageDeleted);
+
+        // ✏️ ОБРАБОТЧИК: Получение события редактирования сообщения
+        const handleMessageUpdated = (data) => {
+          console.log('✏️ [DEBUG] Получено событие message_updated:', data);
+          
+          const { message_id, new_message } = data;
+          
+          // Проверяем что это сообщение из нашего чата
+          const messageExists = messages.some(msg => msg.id === message_id);
+          if (!messageExists) {
+            console.log('✏️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+            return;
+          }
+          
+          // Обновляем сообщение в списке
+          setMessages(prevMessages => {
+            const updated = prevMessages.map(msg => {
+              if (msg.type === 'date') return msg;
+              if (msg.id === message_id) {
+                console.log('✏️ [DEBUG] Сообщение обновлено:', message_id);
+                return { ...msg, message: new_message, is_edited: true };
+              }
+              return msg;
+            });
+            return updated;
+          });
+        };
+        
+        registerHandler('message_updated', handleMessageUpdated);
+
+        // 🆕 ОБРАБОТЧИК ОЧИСТКИ ЧАТА В РЕАЛЬНОМ ВРЕМЕНИ
+        const handleChatCleared = (data) => {
+          
+          if (isGroup) {
+            return;
+          }
+          
+          // ✅ ИСПРАВЛЕНО: Проверяем что это чат между нами и отправителем события
+          // data.initiatorId - тот кто нажал "очистить"
+          // data.otherUserId - адресат (второй участник)
+          // Событие придёт обоим, нам нужно очистить если это наш чат
+          const isRelevantChat = 
+            (data?.initiatorId === user.id && data?.otherUserId === currentUser?.id) ||
+            (data?.otherUserId === user.id && data?.initiatorId === currentUser?.id) ||
+            (data?.initiatorId === user.id) ||
+            (data?.otherUserId === user.id);
+          
+          
+          if (!isRelevantChat) {
+            return;
+          }
+          
+          setMessages([]);
+        };
+        
+        registerHandler('chat_cleared', handleChatCleared);
+
+        // 🔴 КРИТИЧНА ДИАГНОСТИКА: Слушаем напрямую на сокете для отладки
+        if (sharedSocket && isGroup) {
+          
+          sharedSocket.on('new_group_message', (data) => {
+          });
+
+          sharedSocket.on('message_read_status_updated', (data) => {
+          });
+        }
+      } catch (error) {
+      }
+    };
+
+    initializeSocket();
+
+    return () => {
+      isMounted = false;
+      // Очищаем таймауты печатания
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (typingResetTimeoutRef.current) {
+        clearTimeout(typingResetTimeoutRef.current);
+      }
+      // Сбрасываем статус печатания при выходе из чата
+      setIsUserTyping(false);
+      if (socketConnection) {
+        // Отправляем статус офлайн перед отключением
+        if (currentUser?.id) {
+          try {
+            socketConnection.emit('user_status', { 
+              user_id: currentUser.id, 
+              is_online: false,
+              timestamp: new Date().toISOString()
+            });
+          } catch (err) {
+          }
+        }
+        
+        if (isGroup) {
+          socketConnection.emit('leave_group', user.id);
+        }
+        detachments.forEach(unsub => unsub && unsub());
+      }
+    };
+  }, [currentUser?.id, user.id, isGroup, displayName, updateMemberOnlineStatus]);
+
+  // 🔄 ПЕРИОДИЧЕСКОЕ ОБНОВЛЕНИЕ LAST_SEEN TIMESTAMP
+  // Отправляет update_last_seen каждые 30 секунд пока пользователь в личном чате
+  useEffect(() => {
+    if (!isGroup && socket && currentUser?.id && contactOnline) {
+      
+      const interval = setInterval(() => {
+        try {
+          socket.emit('update_last_seen', { user_id: currentUser.id });
+        } catch (err) {
+        }
+      }, 30000); // Каждые 30 секунд
+
+      return () => {
+        clearInterval(interval);
+      };
+    }
+  }, [isGroup, socket, currentUser?.id, contactOnline]);
+
+  const loadCurrentUser = async () => {
+    const userData = await AsyncStorage.getItem('user');
+    setCurrentUser(JSON.parse(userData));
+  };
+
+  const getBackgroundColor = () => {
+    const backgrounds = {
+      'default': theme.background,
+      'light-blue': '#E3F2FD',
+      'light-green': '#E8F5E9',
+      'light-pink': '#FCE4EC',
+      'light-purple': '#F3E5F5',
+      'light-orange': '#FFF3E0',
+      'dark-blue': '#1E3A8A',
+      'dark-green': '#1B4332',
+    };
+    return backgrounds[chatBackground] || theme.background;
+  };
+
+  const getAdaptiveColors = () => {
+    const isDarkBackground = ['dark-blue', 'dark-green'].includes(chatBackground);
+    const isLightBackground = ['light-blue', 'light-green', 'light-pink', 'light-purple', 'light-orange'].includes(chatBackground);
+    
+    if (isDarkBackground) {
+      return {
+        headerBg: '#000000',
+        headerText: '#FFFFFF',
+        inputBg: '#1A1A1A',
+        inputText: '#FFFFFF',
+        textColor: '#FFFFFF',
+        border: '#333333',
+        lightText: '#CCCCCC',
+      };
+    }
+    
+    if (isLightBackground) {
+      return {
+        headerBg: '#FFFFFF',
+        headerText: '#1A1A1A',
+        inputBg: '#F5F5F5',
+        inputText: '#1A1A1A',
+        textColor: '#1A1A1A',
+        border: '#E0E0E0',
+        lightText: '#666666',
+      };
+    }
+    
+    // Default
+    return {
+      headerBg: theme.background,
+      headerText: theme.text,
+      inputBg: theme.surface,
+      inputText: theme.text,
+      textColor: theme.text,
+      border: theme.border,
+      lightText: theme.textLight,
+    };
+  };
+
+  const scrollToBottom = React.useCallback(() => {
+    if (flatListRef.current) {
+      flatListRef.current.scrollToEnd({ animated: true });
+    }
+  }, []);
+
+  const groupMessagesByDate = (messages) => {
+    const grouped = [];
+    let currentDate = null;
+    
+    messages.forEach(message => {
+      const messageDate = new Date(message.created_at).toDateString();
+      
+      if (messageDate !== currentDate) {
+        currentDate = messageDate;
+        grouped.push({
+          id: `date-${message.created_at}`,
+          type: 'date',
+          date: message.created_at
+        });
+      }
+      
+      grouped.push(message);
+    });
+    
+    return grouped;
+  };
+
+  const loadMessages = async () => {
+    try {
+      const response = isGroup 
+        ? await groupAPI.getGroupMessages(user.id)
+        : await messageAPI.getMessages(user.id);
+      
+      // 🔧 ИСПРАВЛЕНИЕ: Нормализуем is_read и исправляем IP в URL видео
+      const correctedMessages = (response.data || []).map(msg => ({
+        ...msg,
+        is_read: Boolean(msg.is_read),  // Конвертим 0/1 → boolean
+        media_url: normalizeMediaUrl(msg.media_url)  // ⭐ Заменяем неправильный IP
+      }));
+      
+      const groupedMessages = groupMessagesByDate(correctedMessages);
+      setMessages(groupedMessages);
+      if (groupedMessages.length > 0) {
+        setTimeout(() => scrollToBottom(), 300);
+      }
+      
+      setReplyToMessage(null);
+    } catch (error) {
+      
+      if (error.response?.status === 401) {
+        error('Ошибка', 'Сессия истекла. Войдите снова', {
+          buttons: [{ text: 'OK', onPress: () => navigation.replace('Login') }],
+          autoClose: false
+        });
+      } else {
+        error('Ошибка', 'Не удалось загрузить сообщения');
+      }
+    }
+  };
+
+  const loadPinnedMessages = async () => {
+    try {
+      if (!currentUser) return;
+      
+      
+      const endpoint = isGroup 
+        ? pinnedAPI.getGroupPinnedMessages(user.id)
+        : pinnedAPI.getPinnedMessages(user.id);
+      
+      const response = await endpoint;
+      
+      const messageIds = response.data.map(p => p.message_id);
+      
+      setPinnedMessages(messageIds);
+    } catch (err) {
+      // Fallback: пытаемся загрузить из локального хранилища
+      try {
+        const key = `pinned_messages_${currentUser.id}_${isGroup ? 'group' : 'chat'}_${user.id}`;
+        const stored = await AsyncStorage.getItem(key);
+        if (stored) {
+          const pinned = JSON.parse(stored);
+          setPinnedMessages(pinned);
+        }
+      } catch (fallbackErr) {
+      }
+    }
+  };
+
+  const togglePinnedMessage = async (messageId, isVisibleToAll = true) => {
+    try {
+      if (!currentUser) return;
+      
+      const current = [...pinnedMessages];
+      const idx = current.findIndex(id => id === messageId);
+      const isPinned = idx > -1;
+      
+      console.log(`\n${'='.repeat(70)}`);
+      console.log(`📌 [DEBUG] togglePinnedMessage ВЫЗВАНА`);
+      console.log(`   message_id: ${messageId}`);
+      console.log(`   current_status: ${isPinned ? 'pinned' : 'unpinned'}`);
+      console.log(`   new_status: ${!isPinned ? 'pinned' : 'unpinned'}`);
+      console.log(`   socket_connected: ${socket && socket.connected}`);
+      console.log(`${'='.repeat(70)}`);
+      
+      if (isPinned) {
+        // Открепить
+        current.splice(idx, 1);
+        await pinnedAPI.unpinMessage(messageId);
+        success('Сообщение откреплено', '');
+        
+        // 📌 НОВОЕ: Отправляем событие через Socket
+        if (socket && socket.connected) {
+          console.log(`📤 [DEBUG] Отправляем message_pin_toggle на Socket (unpin)`);
+          socket.emit('message_pin_toggle', {
+            message_id: messageId,
+            is_pinned: false,
+            pinned_by_user_id: currentUser.id,
+            initiator_id: currentUser.id,
+            other_user_id: isGroup ? null : user.id,
+            group_id: isGroup ? user.id : null,
+            chat_type: isGroup ? 'group' : 'personal',
+            timestamp: new Date().toISOString()
+          });
+          console.log('✅ [DEBUG] message_pin_toggle отправлен\n');
+        } else {
+          console.warn('⚠️ [DEBUG] Socket не подключен, событие не отправлено\n');
+        }
+      } else {
+        // Закрепить
+        current.push(messageId);
+        const chatType = isGroup ? 'group' : 'personal';
+        await pinnedAPI.pinMessage(messageId, chatType, user.id, isVisibleToAll);
+        const message = isVisibleToAll 
+          ? 'Сообщение закреплено для обоих' 
+          : 'Сообщение закреплено только для вас';
+        success(message, '');
+        
+        // 📌 НОВОЕ: Отправляем событие через Socket
+        if (socket && socket.connected) {
+          console.log(`📤 [DEBUG] Отправляем message_pin_toggle на Socket (pin)`);
+          socket.emit('message_pin_toggle', {
+            message_id: messageId,
+            is_pinned: true,
+            pinned_by_user_id: currentUser.id,
+            initiator_id: currentUser.id,
+            other_user_id: isGroup ? null : user.id,
+            group_id: isGroup ? user.id : null,
+            chat_type: isGroup ? 'group' : 'personal',
+            is_visible_to_all: isVisibleToAll,
+            timestamp: new Date().toISOString()
+          });
+          console.log('✅ [DEBUG] message_pin_toggle отправлен\n');
+        } else {
+          console.warn('⚠️ [DEBUG] Socket не подключен, событие не отправлено\n');
+        }
+      }
+      
+      setPinnedMessages(current);
+      
+      // Сохраняем в локальное хранилище как резервный вариант
+      const key = `pinned_messages_${currentUser.id}_${isGroup ? 'group' : 'chat'}_${user.id}`;
+      await AsyncStorage.setItem(key, JSON.stringify(current));
+    } catch (err) {
+      error('Ошибка при закреплении сообщения', '');
+    }
+  };
+
+  const initiateCall = useCallback(async (type) => {
+    try {
+      if (isGroup) {
+        warning('Ошибка', 'Звонки доступны только в личных чатах');
+        return;
+      }
+
+      if (!currentUser || !user?.id) {
+        error('Ошибка', 'Не удалось получить данные пользователя');
+        return;
+      }
+
+      
+      const response = type === 'audio' 
+        ? await callAPI.initiateAudioCall(user.id)
+        : await callAPI.initiateVideoCall(user.id);
+
+      if (response.data?.call_id) {
+        setCurrentCallId(response.data.call_id);
+        setCallType(type);
+        setCallStatus('connecting');
+        setCallModalVisible(true);
+        info('Звонок', `Вызов ${type === 'audio' ? 'голосовой' : 'видео'}...`);
+      }
+    } catch (err) {
+      error('Ошибка', 'Не удалось начать звонок');
+    }
+  }, [isGroup, currentUser, user?.id, callAPI, error, warning, info]);
+
+  const respondToIncomingCall = useCallback(async (accept) => {
+    try {
+      if (!incomingCall?.call_id) {
+        error('Ошибка', 'Не удалось получить ID звонка');
+        return;
+      }
+
+
+      const response = await callAPI.respondToCall(incomingCall.call_id, accept);
+      
+      if (accept && response.data?.status === 'accepted') {
+        setCurrentCallId(incomingCall.call_id);
+        setCallType(incomingCall.call_type || 'audio');
+        setCallStatus('connected');
+        setIncomingCallModalVisible(false);
+        info('Звонок', `Звонок ${incomingCall.call_type || 'audio'} принят`);
+      } else {
+        setIncomingCallModalVisible(false);
+        info('Звонок', 'Входящий звонок отклонен');
+      }
+    } catch (err) {
+      error('Ошибка', 'Не удалось ответить на звонок');
+      setIncomingCallModalVisible(false);
+    }
+  }, [incomingCall?.call_id, incomingCall?.call_type, callAPI, error, info]);
+
+  const loadUnreadCount = async () => {
+    try {
+      if (isGroup) {
+        const response = await groupAPI.getGroupUnreadCount(user.id);
+        setUnreadCount(response.data.unread_count || 0);
+      } else {
+        const response = await messageAPI.getUnreadCount(user.id);
+        setUnreadCount(response.data.unread_count || 0);
+      }
+    } catch (err) {
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      // 🔴 ИСПРАВЛЕНИЕ: Собираем НЕПРОЧИТАННЫЕ сообщения ПЕРЕД вызовом API
+      const unreadMessageIds = messages
+        .filter(msg => {
+          // Пропускаем служебные сообщения (даты и т.п.)
+          if (msg.type === 'date') return false;
+          // Пропускаем сообщения которые уже прочитаны
+          if (msg.is_read) return false;
+          // Для группы: отмечаем только сообщения от других пользователей
+          if (isGroup) {
+            return msg.sender_id !== currentUser?.id;
+          }
+          // Для личного чата: отмечаем только входящие сообщения
+          return msg.sender_id !== currentUser?.id;
+        })
+        .map(msg => msg.id);
+      
+      
+      // Обновляем ТОЛЬКО непрочитанные сообщения локально
+      setMessages(prev => prev.map(msg => {
+        if (msg.type === 'date') return msg;
+        // Отмечаем как прочитанные только если это было непрочитанное входящее сообщение
+        if (!msg.is_read && msg.sender_id !== currentUser?.id) {
+          return { ...msg, is_read: true };
+        }
+        return msg;
+      }));
+      
+      // Отправляем события на сервер для непрочитанных сообщений
+      if (socket && unreadMessageIds.length > 0) {
+        unreadMessageIds.forEach(msgId => {
+          socket.emit('mark_message_read', { message_id: msgId });
+        });
+        
+        // Также отправляем API запрос если нужно
+        if (isGroup) {
+          await groupAPI.markGroupAsRead(user.id);
+        } else {
+          await messageAPI.markAllAsRead(user.id);
+        }
+      }
+      
+      setUnreadCount(0);
+    } catch (err) {
+    }
+  };
+
+  const markMessageAsRead = async (messageId) => {
+    try {
+      await messageAPI.markMessageAsRead(messageId);
+      
+      // Отправляем событие через Socket.io на сервер
+      if (socket) {
+        socket.emit('mark_message_read', { message_id: messageId });
+      }
+      
+      // Обновляем локально
+      setMessages(prev => prev.map(item => {
+        if (item.type === 'date') return item;
+        if (item.id === messageId) {
+          return { ...item, is_read: true };  // явно true, не число
+        }
+        return item;
+      }));
+    } catch (err) {
+    }
+  };
+
+  // 🆕 НОВАЯ ФУНКЦИЯ: Отмечать сообщение как прочитанное только когда оно видно на экране
+  const handleViewableItemsChanged = useCallback(({ viewableItems }) => {
+    if (!socket || !currentUser?.id) return;
+
+    const messagesToMark = [];
+    
+    viewableItems.forEach(viewable => {
+      const message = viewable.item;
+      
+      // Пропускаем служебные сообщения (даты)
+      if (message.type === 'date') return;
+      
+      // Отмечаем входящие сообщения в поле видимости
+      if (!isGroup && message.sender_id !== currentUser?.id && !message.is_read) {
+        messagesToMark.push(message);
+      }
+      
+      // Для групповых чатов - только непрочитанные
+      if (isGroup && !message.is_read && message.sender_id !== currentUser?.id) {
+        messagesToMark.push(message);
+      }
+    });
+    
+    if (messagesToMark.length === 0) return;
+    
+    // Отмечаем все видимые сообщения
+    messagesToMark.forEach(message => {
+      
+      // Отправляем события на сервер
+      socket.emit('mark_message_read', { message_id: message.id });
+      
+      // Обновляем локально
+      setMessages(prev => prev.map(msg => {
+        if (msg.type === 'date') return msg;
+        if (msg.id === message.id) {
+          return { ...msg, is_read: true };
+        }
+        return msg;
+      }));
+    });
+    
+    // 📢 Отправляем событие на ChatsListScreen для обновления счётчика
+    if (messagesToMark.length > 0) {
+      const eventData = isGroup 
+        ? { group_id: user.id, unread_count: 0 }
+        : { friend_id: user.id, unread_count: 0 };
+      socket.emit('chat_unread_count_updated', eventData);
+    }
+  }, [socket, currentUser?.id, isGroup, user.id]);
+
+  // Обработчик события: сообщение прочитано (от сервера)
+  const handleMessageReadStatusUpdated = (data) => {
+    const { message_id, is_read, read_by, reader_count, sender_id, receiver_id, group_id } = data;
+    
+    
+    // ПРОВЕРКА: Это событие для нашего чата?
+    let isForThisChat = false;
+    if (group_id) {
+      // Групповой чат
+      isForThisChat = Number(group_id) === Number(user.id);
+    } else if (!isGroup) {
+      // Личный чат - событие от собеседника о том что он прочитал НАШИ сообщения
+      // Наши сообщения имеют sender_id = currentUser.id, receiver_id = user.id
+      // Событие приходит с той же парой IDs
+      isForThisChat = (Number(sender_id) === Number(currentUser?.id) && Number(receiver_id) === Number(user.id)) ||
+                      (Number(sender_id) === Number(user.id) && Number(receiver_id) === Number(currentUser?.id));
+    }
+    
+    if (!isForThisChat) {
+      return;
+    }
+    
+    
+    // Обновляем сообщение в списке
+    setMessages(prev => {
+      const updated = [];
+      for (let i = 0; i < prev.length; i++) {
+        const msg = prev[i];
+        if (msg.id === message_id) {
+          // Конвертируем is_read в boolean (может быть 0/1 с сервера)
+          const isReadBoolean = Boolean(is_read);
+          // Создаём НОВЫЙ объект
+          const newMsg = {
+            ...msg,
+            is_read: isReadBoolean,
+            read_by: read_by || msg.read_by,
+            reader_count: reader_count || msg.reader_count
+          };
+          updated.push(newMsg);
+        } else {
+          updated.push(msg);
+        }
+      }
+      
+      return updated;
+    });
+    
+    
+    // 🔍 ДИАГНОСТИКА: Проверяем визуальное обновление
+    setTimeout(() => {
+      const updated = messages.find(m => m.id === message_id);
+    }, 50);
+  };
+
+  const sendMessage = async (mediaData = null, captionText = null) => {
+    if (!newMessage.trim() && !mediaData) {
+      warning('Ошибка', 'Введите сообщение или выберите медиа');
+      return;
+    }
+    
+    // Скрываем клавиатуру сразу после отправки
+    Keyboard.dismiss();
+    
+    const messageText = newMessage.trim() || '📎 Медиа';
+    setNewMessage('');
+    
+    try {
+      const messageData = {
+        ...(isGroup ? { group_id: user.id } : { receiver_id: user.id }),
+        message: messageText,
+        reply_to: replyToMessage?.id || null,
+        media_type: mediaData?.type || 'text',
+        media_url: mediaData?.url || null,
+        caption: captionText || null,
+      };
+      
+      const response = await (isGroup 
+        ? groupAPI.sendGroupMessage(messageData)
+        : messageAPI.sendMessage(messageData));
+      
+      const replyMetadata = replyToMessage
+        ? {
+            reply_to_message: replyToMessage.message || replyToMessage.media_url || '',
+            reply_to_sender: replyToMessage.sender_id === currentUser?.id
+              ? currentUser?.username
+              : replyToMessage.sender_username || (isGroup ? replyToMessage.sender_username : user.username),
+            reply_to_sender_id: replyToMessage.sender_id,
+          }
+        : {};
+
+      const enrichedMessage = {
+        ...response.data,
+        sender_username: currentUser?.username || 'Вы',
+        ...replyMetadata,
+      };
+
+      setMessages(prev => {
+        const exists = prev.some(msg => msg.id === enrichedMessage.id);
+        if (exists) return prev;
+        
+        const lastMessage = prev[prev.length - 1];
+        const newMessageDate = new Date(enrichedMessage.created_at).toDateString();
+        const lastMessageDate = lastMessage && new Date(lastMessage.created_at).toDateString();
+        
+        let updatedMessages = [...prev];
+        if (newMessageDate !== lastMessageDate) {
+          updatedMessages.push({
+            id: `date-${enrichedMessage.created_at}`,
+            type: 'date',
+            date: enrichedMessage.created_at
+          });
+        }
+        updatedMessages.push(enrichedMessage);
+        
+        
+        // Скролл вниз с задержкой чтобы FlatList успел перерендериться
+        setTimeout(() => {
+          scrollToBottom();
+        }, 150);
+        
+        return updatedMessages;
+      });
+
+      // ✅ ВАЖНО: Отправляем событие на сокет чтобы ChatsListScreen обновился!
+      if (socket && socket.connected) {
+        socket.emit('message_sent', {
+          sender_id: currentUser?.id,
+          receiver_id: isGroup ? null : user.id,
+          group_id: isGroup ? user.id : null,
+          message: messageText,
+          created_at: enrichedMessage.created_at,
+          is_read: enrichedMessage.is_read,
+        });
+      }
+      
+      setReplyToMessage(null);
+      
+      // ✅ ВАЖНО: Не используем fallback таймер, сообщение уже добавлено!
+      // Если сокет событие придет - handleNewMessage его проверит по exists
+    } catch (error) {
+      setNewMessage(messageText);
+      
+      if (error.response?.status === 401) {
+        error('Ошибка', 'Сессия истекла. Войдите снова', {
+          buttons: [{ text: 'OK', onPress: () => navigation.replace('Login') }],
+          autoClose: false
+        });
+      } else {
+        const errorMessage = error.response?.data?.error || 'Не удалось отправить сообщение';
+        error('Ошибка отправки', errorMessage);
+      }
+    }
+  };
+
+  const handleMediaCaptionSend = async (caption) => {
+    try {
+      let mediaUrl = pendingMediaUri;
+      
+      // Если это видео, загружаем его сначала на сервер
+      if (pendingMediaType === 'video') {
+        setUploadingMediaUri(pendingMediaUri);
+        setMediaUploadProgress({ 
+          uri: pendingMediaUri, 
+          progress: 0, 
+          speed: '0 KB/s', 
+          timeRemaining: 'Калькуляция...', 
+          type: 'video' 
+        });
+        
+        const uploadResponse = await mediaAPI.uploadMedia(pendingMediaUri, 'video', (progressEvent) => {
+          if (progressEvent.total > 0) {
+            const progress = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+            const speed = ((progressEvent.loaded / (progressEvent.timeStamp / 1000)) / 1024).toFixed(1);
+            const timeRemaining = progressEvent.total > progressEvent.loaded 
+              ? Math.ceil((progressEvent.total - progressEvent.loaded) / (progressEvent.loaded / (progressEvent.timeStamp / 1000)))
+              : 0;
+            
+            setMediaUploadProgress({
+              uri: pendingMediaUri,
+              progress,
+              speed: `${speed} KB/s`,
+              timeRemaining: `${timeRemaining}s`,
+              type: 'video'
+            });
+          }
+        });
+        
+        mediaUrl = uploadResponse.data.url;
+        setUploadingMediaUri(null);
+        setMediaUploadProgress(null);
+      }
+      
+      // Отправляем сообщение с подписью как отдельное поле
+      setNewMessage('');
+      await sendMessage({ 
+        type: pendingMediaType, 
+        url: mediaUrl
+      }, caption);
+      
+      // Очищаем состояние
+      setPendingMediaUri(null);
+      setPendingMediaType(null);
+    } catch (err) {
+      setUploadingMediaUri(null);
+      setMediaUploadProgress(null);
+      error('Ошибка', 'Не удалось загрузить медиа');
+    }
+  };
+
+  const pickMedia = () => {
+    info(
+      'Выберите медиа',
+      'Что вы хотите отправить?',
+      {
+        buttons: [
+          { text: 'Отмена', color: '#ccc', textColor: '#333', onPress: () => {} },
+          { text: 'Фото', color: theme.primary, onPress: () => pickImage() },
+          { text: 'Видео', color: theme.primary, onPress: () => pickVideo() },
+        ],
+        autoClose: false
+      }
+    );
+  };
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      warning('Ошибка', 'Нужно разрешение для доступа к галерее');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      setPendingMediaUri(base64Image);
+      setPendingMediaType('image');
+      setMediaCaptionModalVisible(true);
+    }
+  };
+
+  const pickVideo = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      warning('Ошибка', 'Нужно разрешение для доступа к галерее');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsEditing: true,
+      quality: 0.5,
+      base64: false,
+      videoMaxDuration: 30,
+    });
+
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setPendingMediaUri(asset.uri);
+      setPendingMediaType('video');
+      setMediaCaptionModalVisible(true);
+    }
+  };
+
+  const pickGroupAvatar = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      warning('Ошибка', 'Нужно разрешение для доступа к галерее');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      try {
+        setGroupAvatarUpdating(true);
+        const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        const token = await AsyncStorage.getItem('token');
+        
+        // Загружаем аватарку на сервер
+        // groupId из props (текущего чата), не user.id
+        const groupId = isGroup ? user.id : null;
+        
+        if (!groupId) {
+          error('Ошибка', 'Группа не определена');
+          setGroupAvatarUpdating(false);
+          return;
+        }
+        
+        const response = await fetch(`${API_URL}/groups/${groupId}/avatar`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            avatar: base64Image,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // Обновляем локальные данные
+          if (socket) {
+            socket.emit('group_avatar_updated', {
+              group_id: user.id,
+              avatar: data.avatar,
+            });
+          }
+          success('Готово', 'Аватар группы обновлен');
+          // Перезагружаем данные группы
+          refreshGroupMembers();
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          error('Ошибка', errorData.error || 'Не удалось обновить аватар');
+        }
+      } catch (err) {
+        error('Ошибка', 'Не удалось загрузить аватар');
+      } finally {
+        setGroupAvatarUpdating(false);
+      }
+    }
+  };
+
+  const handleVoiceMessageSend = async (recordingData) => {
+    try {
+      setVoiceRecorderModalVisible(false);
+      
+      // Загружаем голосовое сообщение без блокирующего диалога
+      const uploadResponse = await audioRecorder.uploadVoiceMessage(recordingData.uri, mediaAPI);
+      
+      
+      // Отправляем сообщение
+      sendMessage({ 
+        type: 'voice', 
+        url: uploadResponse.url,
+        duration: recordingData.duration
+      });
+      
+    } catch (err) {
+      error('Ошибка', 'Не удалось загрузить голосовое сообщение');
+    }
+  };
+
+  const handleVoiceButtonPressIn = async () => {
+    try {
+      // Сбрасываем флаг при начале новой записи
+      isProcessingVoiceRef.current = false;
+      
+      const success = await audioRecorder.startRecording();
+      if (success) {
+        setIsRecordingVoice(true);
+        setVoiceRecordingDuration(0);
+        
+        // Обновляем длительность каждые 100ms
+        voiceRecordingIntervalRef.current = setInterval(() => {
+          const status = audioRecorder.getStatus();
+          setVoiceRecordingDuration(status.duration);
+        }, 100);
+      }
+    } catch (err) {
+      error('Ошибка', 'Не удалось начать запись');
+    }
+  };
+
+  const handleVoiceButtonPressOut = async () => {
+    try {
+      // Предотвращаем повторный вызов
+      if (isProcessingVoiceRef.current) {
+        return;
+      }
+      isProcessingVoiceRef.current = true;
+
+      // Сразу очищаем интервал и выключаем индикатор
+      if (voiceRecordingIntervalRef.current) {
+        clearInterval(voiceRecordingIntervalRef.current);
+        voiceRecordingIntervalRef.current = null;
+      }
+
+      setIsRecordingVoice(false);
+      
+      // Получаем актуальную длительность из audioRecorder
+      const status = audioRecorder.getStatus();
+      const duration = status.duration;
+      
+      
+      if (duration < 1) {
+        // Если запись менее 1 секунды, отменяем
+        await audioRecorder.cancelRecording();
+        isProcessingVoiceRef.current = false;
+        warning('Запись слишком короткая', 'Минимальная длительность - 1 секунда');
+        return;
+      }
+
+      // Останавливаем запись
+      const recordingData = await audioRecorder.stopRecording();
+      
+      
+      if (recordingData) {
+        // Отправляем голосовое сообщение
+        await handleVoiceMessageSend(recordingData);
+      } else {
+      }
+      
+      isProcessingVoiceRef.current = false;
+    } catch (err) {
+      isProcessingVoiceRef.current = false;
+      error('Ошибка', 'Не удалось завершить запись');
+    }
+  };
+
+  const performSearch = useCallback((query) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const results = messages.filter(msg => {
+      if (msg.type === 'date') return false;
+      
+      // Ищем в текстовых сообщениях
+      if (msg.message && msg.message.toLowerCase().includes(lowerQuery)) {
+        return true;
+      }
+      
+      // Для медиа сообщений показываем если есть заголовок
+      if (msg.media_type && msg.message === '📎 Медиа') {
+        return false;
+      }
+      
+      return false;
+    });
+
+    setSearchResults(results);
+  }, [messages]);
+
+  const handleSearchChange = (query) => {
+    setSearchQuery(query);
+    performSearch(query);
+  };
+
+  const handleClearChat = async () => {
+    try {
+      
+      // Очищаем чат через API
+      const response = await messageAPI.clearChat(user.id);
+      
+      // Очищаем сообщения локально
+      setMessages([]);
+      
+      // Emit socket event для синхронизации с другим пользователем
+      if (socket && socket.connected) {
+        socket.emit('request_clear_chat', {
+          other_user_id: user.id,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+      }
+    } catch (err) {
+      error('Ошибка', 'Не удалось очистить чат: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDeleteChat = async () => {
+    try {
+      if (!user) {
+        error('Ошибка', 'Не удалось получить данные пользователя');
+        return;
+      }
+      
+      // Удаляем чат через API
+      await messageAPI.deleteChat(user.id);
+      
+      // Очищаем сообщения локально
+      setMessages([]);
+      success('Успех', 'Чат удален');
+      
+      // Возвращаемся на предыдущий экран
+      setTimeout(() => {
+        navigation.goBack();
+      }, 500);
+    } catch (err) {
+      error('Ошибка', 'Не удалось удалить чат: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleGroupMenu = () => {
+    setChatMenuVisible(true);
+  };
+
+  const deleteMessage = async (messageId) => {
+    info(
+      'Удалить сообщение',
+      'Вы уверены что хотите удалить это сообщение?',
+      {
+        buttons: [
+          { text: 'Отмена', color: '#ccc', textColor: '#333' },
+          {
+            text: 'Удалить',
+            color: '#F44336',
+            onPress: async () => {
+              try {
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`🗑️ [DEBUG] deleteMessage ВЫЗВАНА`);
+                console.log(`   message_id: ${messageId}`);
+                console.log(`   socket_connected: ${socket && socket.connected}`);
+                console.log(`${'='.repeat(70)}`);
+
+                // Удаляем сообщение локально ПЕРЕД API запросом
+                setMessages(prev => {
+                  const filtered = prev.filter(msg => msg.id !== messageId);
+                  console.log('🗑️ [DEBUG] Сообщение удалено локально:', messageId);
+                  return filtered;
+                });
+
+                // Отправляем запрос на удаление на сервер
+                if (isGroup) {
+                  await groupAPI.deleteGroupMessage(messageId);
+                } else {
+                  await messageAPI.deleteMessage(messageId);
+                }
+
+                console.log('✅ [DEBUG] Сообщение удалено на сервере:', messageId);
+
+                // 📌 НОВОЕ: Отправляем Socket событие другому пользователю
+                if (socket && socket.connected) {
+                  console.log(`📤 [DEBUG] Отправляем message_deleted на Socket`);
+                  
+                  socket.emit('message_deleted', {
+                    message_id: messageId,
+                    chat_type: isGroup ? 'group' : 'personal',
+                    other_user_id: isGroup ? null : user.id,
+                    group_id: isGroup ? user.id : null,
+                    user_id: currentUser?.id
+                  });
+                  
+                  console.log('✅ [DEBUG] message_deleted отправлено\n');
+                } else {
+                  console.warn('⚠️ [DEBUG] Socket не подключен, событие не отправлено\n');
+                }
+
+              } catch (err) {
+                console.error('❌ [DEBUG] Ошибка при удалении сообщения:', err);
+                error('Ошибка', 'Не удалось удалить сообщение');
+              }
+            }
+          }
+        ],
+        autoClose: false
+      }
+    );
+  };
+
+  const editMessage = async (messageId, newText) => {
+    try {
+      if (!newText.trim()) {
+        warning('Ошибка', 'Текст не может быть пустым');
+        return;
+      }
+
+      console.log(`\n${'='.repeat(70)}`);
+      console.log(`✏️ [DEBUG] editMessage ВЫЗВАНА`);
+      console.log(`   message_id: ${messageId}`);
+      console.log(`   new_text: ${newText}`);
+      console.log(`   socket_connected: ${socket && socket.connected}`);
+      console.log(`${'='.repeat(70)}`);
+
+      // Отправляем запрос на редактирование на сервер
+      if (isGroup) {
+        await groupAPI.editGroupMessage(messageId, newText);
+      } else {
+        await messageAPI.editMessage(messageId, newText);
+      }
+
+      console.log('✅ [DEBUG] Сообщение отредактировано на сервере:', messageId);
+
+      // Обновляем локально
+      setMessages(prev => prev.map(msg => {
+        if (msg.type === 'date') return msg;
+        if (msg.id === messageId) {
+          return { ...msg, message: newText, is_edited: true };
+        }
+        return msg;
+      }));
+
+      // 📌 НОВОЕ: Отправляем Socket событие другому пользователю
+      if (socket && socket.connected) {
+        console.log(`📤 [DEBUG] Отправляем message_updated на Socket`);
+        
+        socket.emit('message_updated', {
+          message_id: messageId,
+          new_message: newText,
+          chat_type: isGroup ? 'group' : 'personal',
+          other_user_id: isGroup ? null : user.id,
+          group_id: isGroup ? user.id : null,
+          user_id: currentUser?.id
+        });
+        
+        console.log('✅ [DEBUG] message_updated отправлено\n');
+      } else {
+        console.warn('⚠️ [DEBUG] Socket не подключен, событие не отправлено\n');
+      }
+
+      // Закрываем модаль
+      setEditModalVisible(false);
+      setEditingMessage(null);
+      setEditingText('');
+      success('Успех', 'Сообщение отредактировано');
+
+    } catch (err) {
+      console.error('❌ [DEBUG] Ошибка при редактировании сообщения:', err);
+      error('Ошибка', 'Не удалось отредактировать сообщение');
+    }
+  };
+
+  const SwipeableMessage = ({ item, onReply, showSenderMeta = true }) => {
+    const translateX = useRef(new Animated.Value(0)).current;
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const opacityAnim = useRef(new Animated.Value(1)).current;
+    const messageRef = useRef({ lastTap: 0 });  // ✏️ ДОБАВИТЬ ЭТУ СТРОКУ
+    const isSent = item.sender_id === currentUser?.id;
+    const [contextMenu, setContextMenu] = useState(false);
+    const senderName = item.sender_username || item.sender_name || item.sender || 'Участник';
+    const senderAvatar = item.sender_avatar || item.avatar || null;
+    const senderInitial = senderName?.[0]?.toUpperCase?.() || '•';
+    const showGroupMeta = isGroup && !isSent && showSenderMeta;
+    const shouldShowInlineLabel = isGroup && isSent;
+    
+    const onGestureEvent = Animated.event(
+      [{ nativeEvent: { translationX: translateX } }],
+      { useNativeDriver: true }
+    );
+    
+    const onHandlerStateChange = (event) => {
+      if (event.nativeEvent.state === 5) { // END
+        if (event.nativeEvent.translationX > 50) {
+          onReply(item);
+        }
+        Animated.spring(translateX, {
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      }
+    };
+
+    const handleLongPress = () => {
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 0.96,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setContextMenu(true);
+    };
+
+    const renderAvatar = () => (
+      <View style={styles.groupAvatarWrapper}>
+        {senderAvatar ? (
+          <Image source={{ uri: senderAvatar }} style={styles.groupAvatarImage} />
+        ) : (
+          <View style={[styles.groupAvatarPlaceholder, { backgroundColor: theme.primary + '20' }]}>
+            <Text style={[styles.groupAvatarInitial, { color: theme.primary }]}>
+              {senderInitial}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+
+    const messageBubble = (
+      <TouchableOpacity
+        onLongPress={handleLongPress}
+        onPress={() => {
+          // Счётчик для двойного нажатия
+          const now = Date.now();
+          const DOUBLE_PRESS_DELAY = 300;
+          
+          if (now - (messageRef.current.lastTap || 0) < DOUBLE_PRESS_DELAY) {
+            // Двойное нажатие - открываем модаль редактирования
+            if (isSent && !item.reply_to) { // Только свои сообщения без ответа
+              setEditingMessage(item);
+              setEditingText(item.message);
+              setEditModalVisible(true);
+            }
+          }
+          messageRef.current.lastTap = now;
+        }}
+        delayLongPress={500}
+        activeOpacity={1}
+      >
+        <View
+          style={[
+            styles.messageContainer,
+            isSent ? styles.sentContainer : styles.receivedContainer,
+            isSent
+              ? { ...styles.sentMessage, backgroundColor: theme.sentMessage }
+              : { ...styles.receivedMessage, backgroundColor: theme.surface },
+          ]}
+        >
+          {shouldShowInlineLabel && (
+            <Text
+              style={[
+                styles.groupSenderLabel,
+                styles.groupSenderLabelSent
+              ]}
+            >
+              Вы
+            </Text>
+          )}
+          {item.reply_to && (
+            <View style={[styles.replyContainer, { backgroundColor: isSent ? 'rgba(255,255,255,0.1)' : theme.background }]}>
+              <View style={styles.replyHeader}>
+                <Ionicons name="return-up-forward" size={12} color={isSent ? 'rgba(255,255,255,0.8)' : '#667eea'} />
+                <Text style={[styles.replyAuthor, isSent ? styles.replyAuthorSent : { ...styles.replyAuthorReceived, color: '#667eea' }]}>
+                  {item.reply_to_sender_id === currentUser?.id ? 'Вы' : (item.reply_to_sender || displayName)}
+                </Text>
+              </View>
+              <Text style={[styles.replyText, isSent ? styles.replyTextSent : { ...styles.replyTextReceived, color: theme.textSecondary }]}>
+                {item.reply_to_message}
+              </Text>
+            </View>
+          )}
+          {item.media_type === 'image' && item.media_url ? (
+            <View>
+              <TouchableOpacity onPress={() => {
+                setSelectedPhotoUri(item.media_url);
+                setFullscreenPhotoVisible(true);
+              }}>
+                <Image 
+                  source={{ uri: item.media_url }} 
+                  style={styles.messageImage}
+                  resizeMode="cover"
+                />
+              </TouchableOpacity>
+              {item.caption && (
+                <Text style={[
+                  styles.captionText,
+                  isSent ? { ...styles.sentText, color: '#ffffff' } : { ...styles.receivedText, color: theme.text }
+                ]}>
+                  {item.caption}
+                </Text>
+              )}
+            </View>
+          ) : item.media_type === 'video' && item.media_url ? (
+            <View>
+              {videoLoadErrors[item.id] ? (
+                <View style={[styles.videoErrorContainer, { backgroundColor: theme.background }]}>
+                  <Ionicons name="alert-circle-outline" size={32} color="#FF6B6B" />
+                  <Text style={[styles.videoErrorText, { color: '#FF6B6B' }]}>
+                    {videoLoadErrors[item.id]}
+                  </Text>
+                  <Text style={[styles.videoErrorUrl, { color: theme.textSecondary }]} numberOfLines={1}>
+                    {item.media_url}
+                  </Text>
+                </View>
+              ) : (
+                <Video
+                  key={`video-${item.id}`}
+                  source={{ uri: item.media_url }}
+                  style={styles.messageVideo}
+                  useNativeControls={true}
+                  resizeMode="contain"
+                  shouldPlay={false}
+                  progressUpdateIntervalMillis={500}
+                  onError={(error) => {
+                    console.error('❌ [VIDEO] Ошибка загрузки видео:', {
+                      url: item.media_url,
+                      error: error?.message || error
+                    });
+                    setVideoLoadErrors(prev => ({
+                      ...prev,
+                      [item.id]: error?.message || 'Не удалось загрузить видео'
+                    }));
+                  }}
+                  onLoad={(data) => {
+                    console.log('✅ [VIDEO] Видео успешно загружено:', {
+                      url: item.media_url,
+                      duration: data?.durationMillis,
+                      isPlaying: data?.isPlaying
+                    });
+                  }}
+                  onLoadStart={() => {
+                    console.log('⏳ [VIDEO] Начало загрузки видео:', item.media_url);
+                  }}
+                  posterResizeMode="contain"
+                  rate={1.0}
+                  volume={1.0}
+                  isMuted={false}
+                />
+              )}
+              {item.caption && (
+                <Text style={[
+                  styles.captionText,
+                  isSent ? { ...styles.sentText, color: '#ffffff' } : { ...styles.receivedText, color: theme.text }
+                ]}>
+                  {item.caption}
+                </Text>
+              )}
+            </View>
+          ) : item.media_type === 'voice' && item.media_url ? (
+            <VoiceMessagePlayer
+              uri={item.media_url}
+              duration={item.duration || 0}
+              theme={theme}
+              isCurrentUser={isSent}
+              style={{ marginVertical: 4 }}
+            />
+          ) : null}
+          {item.message !== '📎 Медиа' && (
+            <Text style={[
+              styles.messageText,
+              isSent ? { ...styles.sentText, color: '#ffffff' } : { ...styles.receivedText, color: theme.text }
+            ]}>
+              {item.message}
+            </Text>
+          )}
+          <View style={styles.messageTimeContainer}>
+            <Text style={[
+              styles.messageTime,
+              isSent ? styles.sentTime : styles.receivedTime
+            ]}>
+              {new Date(item.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            {item.is_edited && (
+              <Text style={[
+                styles.editedIndicator,
+                isSent ? styles.editedIndicatorSent : styles.editedIndicatorReceived
+              ]}>
+                (изменено)
+              </Text>
+            )}
+            {isSent && (
+              <View style={styles.checkmarkContainer}>
+                {isGroup && item.reader_count > 0 ? (
+                  // 👥 ДЛЯ ГРУПП: показываем количество прочитавших
+                  <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
+                    ✓✓ ({item.reader_count})
+                  </Text>
+                ) : !isGroup ? (
+                  // ДЛЯ ЛИЧНЫХ ЧАТОВ: показываем одну или две галочки
+                  <>
+                    <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
+                      {Boolean(item.is_read) ? '✓✓' : '✓'}
+                    </Text>
+                  </>
+                ) : null}
+              </View>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+    
+    return (
+      <>
+        <RNGHPanGestureHandler
+          onGestureEvent={onGestureEvent}
+          onHandlerStateChange={onHandlerStateChange}
+          activeOffsetX={[-10, 10]}
+          failOffsetY={[-5, 5]}
+        >
+          <Animated.View
+            style={[
+              styles.messageRow,
+              isSent ? styles.sentRow : styles.receivedRow,
+              showGroupMeta && styles.groupMessageRow,
+              { transform: [{ translateX }, { scale: scaleAnim }] }
+            ]}
+          >
+            {showGroupMeta && renderAvatar()}
+            <View style={[
+              styles.groupMessageContent,
+              showGroupMeta && styles.groupMessageContentWithAvatar
+            ]}>
+              {isGroup && showGroupMeta && (
+                <Text style={[styles.groupSenderLabel, { color: theme.textSecondary }]}>
+                  {senderName}
+                </Text>
+              )}
+              {messageBubble}
+            </View>
+          </Animated.View>
+        </RNGHPanGestureHandler>
+
+        {/* Контекстное меню при долгом нажатии */}
+        <Modal
+          visible={contextMenu}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setContextMenu(false)}
+        >
+          <TouchableOpacity 
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setContextMenu(false)}
+          >
+            <View style={styles.contextMenuBackdrop}>
+              <View style={[styles.contextMenu, { backgroundColor: theme.surface }]}>
+                <TouchableOpacity 
+                  style={styles.contextMenuItem}
+                  onPress={() => {
+                    setReplyToMessage(item);
+                    setContextMenu(false);
+                  }}
+                >
+                  <Ionicons name="return-up-forward" size={18} color={theme.primary} />
+                  <Text style={[styles.contextMenuItemText, { color: theme.text }]}>Ответить</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.contextMenuItem}
+                  onPress={() => {
+                    const isPinned = pinnedMessages.includes(item.id);
+                    if (isPinned) {
+                      // Если уже закреплено, откреплять без вопроса
+                      togglePinnedMessage(item.id);
+                    } else {
+                      // Если не закреплено, показать модальное окно выбора
+                      setPendingPinMessageId(item.id);
+                      setPinVisibilityModalVisible(true);
+                    }
+                    setContextMenu(false);
+                  }}
+                >
+                  <Ionicons 
+                    name={pinnedMessages.includes(item.id) ? 'pin-off' : 'pin'} 
+                    size={18} 
+                    color={theme.primary} 
+                  />
+                  <Text style={[styles.contextMenuItemText, { color: theme.text }]}>
+                    {pinnedMessages.includes(item.id) ? 'Открепить' : 'Закрепить'}
+                  </Text>
+                </TouchableOpacity>
+
+                {isSent && (
+                  <TouchableOpacity 
+                    style={[styles.contextMenuItem, styles.contextMenuItemDanger]}
+                    onPress={() => {
+                      deleteMessage(item.id);
+                      setContextMenu(false);
+                    }}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    <Text style={[styles.contextMenuItemText, { color: '#EF4444' }]}>Удалить</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      </>
+    );
+  };
+  
+  const formatMessageDate = (date) => {
+    const messageDate = new Date(date);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (messageDate.toDateString() === today.toDateString()) {
+      return 'Сегодня';
+    } else if (messageDate.toDateString() === yesterday.toDateString()) {
+      return 'Вчера';
+    } else {
+      return messageDate.toLocaleDateString('ru-RU', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    }
+  };
+
+  const DateSeparator = ({ date }) => (
+    <View style={styles.dateSeparatorContainer}>
+      <View style={styles.dateSeparatorLine} />
+      <View style={styles.dateSeparatorBadge}>
+        <Text style={styles.dateSeparatorText}>{formatMessageDate(date)}</Text>
+      </View>
+      <View style={styles.dateSeparatorLine} />
+    </View>
+  );
+
+  const renderItem = React.useCallback(({ item, index }) => {
+    if (item.type === 'date') {
+      return <DateSeparator date={item.date} />;
+    }
+    
+    // ОТЛАДКА: Логируем изменения is_read для первых 20 сообщений
+    if (item.sender_id === currentUser?.id && item.id <= 20) {
+      if (item.is_read) {
+        // Логируем когда is_read = true
+      }
+    }
+    
+    let showSenderMeta = true;
+    if (!isGroup || item.sender_id === currentUser?.id) {
+      showSenderMeta = false;
+    } else if (index !== undefined) {
+      for (let i = index - 1; i >= 0; i -= 1) {
+        const prev = messages[i];
+        if (!prev || prev.type === 'date') {
+          continue;
+        }
+        if (prev.sender_id === item.sender_id) {
+          const prevDate = prev.created_at ? new Date(prev.created_at).toDateString() : null;
+          const currDate = item.created_at ? new Date(item.created_at).toDateString() : null;
+          if (prevDate === currDate) {
+            showSenderMeta = false;
+          }
+        }
+        break;
+      }
+    }
+
+    return (
+      <SwipeableMessage
+        item={item}
+        onReply={setReplyToMessage}
+        showSenderMeta={showSenderMeta}
+      />
+    );
+  }, [currentUser?.id, displayName, isGroup, messages]);
+
+  const renderAvailableMemberItem = ({ item }) => {
+    const isAdding = addingMemberId === item.id;
+    return (
+      <View style={[styles.groupMemberRow, { backgroundColor: theme.surface }]}>
+        {item.avatar ? (
+          <Image source={{ uri: item.avatar }} style={styles.groupMemberAvatar} />
+        ) : (
+          <View style={[styles.groupMemberPlaceholder, { backgroundColor: theme.primary }]}>
+            <Text style={styles.groupMemberInitial}>{item.username?.[0]?.toUpperCase?.() || 'U'}</Text>
+          </View>
+        )}
+        <View style={styles.groupMemberInfo}>
+          <Text style={[styles.groupMemberName, { color: theme.text }]}>{item.username}</Text>
+          <View style={styles.groupMemberMeta}>
+            <View style={[styles.memberRoleChip, { backgroundColor: theme.primary + '15' }]}>
+              <Text style={[styles.memberRoleChipText, { color: theme.primary }]}>
+                {item.status === 'accepted' ? 'Друг' : 'Не в друзьях'}
+              </Text>
+            </View>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.addMemberButton,
+            isAdding && styles.addMemberButtonDisabled
+          ]}
+          onPress={() => handleAddMember(item)}
+          disabled={isAdding}
+        >
+          {isAdding ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="person-add" size={16} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={styles.addMemberButtonText}>Добавить</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const filteredAvailableMembers = useMemo(() => {
+    const query = addMembersQuery.trim().toLowerCase();
+    if (!query) {
+      return availableMembers;
+    }
+    return availableMembers.filter(candidate =>
+      candidate.username.toLowerCase().includes(query)
+    );
+  }, [addMembersQuery, availableMembers]);
+
+  const callStatusLabel = useMemo(() => {
+    switch (callStatus) {
+      case 'connecting':
+        return 'Подключение...';
+      case 'ringing':
+        return 'Вызов...';
+      case 'connected':
+        return 'Вызов установлен';
+      case 'ended':
+        return 'Звонок завершён';
+      case 'cancelled':
+        return 'Звонок отменён';
+      default:
+        return 'Подготовка вызова';
+    }
+  }, [callStatus]);
+
+  const callGradient = useMemo(() => {
+    if (callType === 'video') {
+      return isDark ? ['#FF8C00', '#FF7B00'] : ['#FFA705', '#FF8C00'];
+    }
+    return isDark ? ['#FF8C00', '#FF7B00'] : ['#FFA705', '#FF8C00'];
+  }, [callType, isDark]);
+
+  const callCardBackground = useMemo(
+    () => (isDark ? 'rgba(17,24,39,0.92)' : 'rgba(255,255,255,0.92)'),
+    [isDark]
+  );
+
+  const callPrimaryText = useMemo(
+    () => (isDark ? '#F9FAFB' : '#111827'),
+    [isDark]
+  );
+
+  const callSecondaryText = useMemo(
+    () => (isDark ? 'rgba(255,255,255,0.72)' : '#475569'),
+    [isDark]
+  );
+
+  const callControlsDisabled = callStatus !== 'connected';
+
+  useEffect(() => {
+    if (callStatus === 'connected') {
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+      }
+      callTimerRef.current = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    } else if (callTimerRef.current) {
+      clearInterval(callTimerRef.current);
+      callTimerRef.current = null;
+    }
+
+    return () => {
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
+      }
+    };
+  }, [callStatus]);
+
+  useEffect(() => () => clearCallTimers(), [clearCallTimers]);
+
+  const closeCallModal = useCallback(() => {
+    clearCallTimers();
+    setCallModalVisible(false);
+    setCallStatus('idle');
+    setCallDuration(0);
+    setIsMuted(false);
+    setIsSpeakerOn(false);
+    setIsCameraOn(true);
+  }, [clearCallTimers]);
+
+  const openCallModal = useCallback((type = 'audio') => {
+    if (isGroup) {
+      warning('Групповой звонок недоступен', 'Звонки доступны только в личных чатах.');
+      return;
+    }
+
+    clearCallTimers();
+    setShowProfileModal(false);
+    setCallType(type);
+    setCallDuration(0);
+    setIsMuted(false);
+    setIsSpeakerOn(false);
+    setIsCameraOn(true);
+    setCallStatus('connecting');
+    setCallModalVisible(true);
+
+    if (socket?.emit) {
+      socket.emit('call:initiate', {
+        to: user.id,
+        type,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    scheduleCallTimeout(() => setCallStatus('ringing'), 350);
+    scheduleCallTimeout(() => {
+      setCallStatus('connected');
+      if (socket?.emit) {
+        socket.emit('call:connected', {
+          to: user.id,
+          type,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }, 1800);
+  }, [isGroup, warning, clearCallTimers, socket, user.id, scheduleCallTimeout]);
+
+  const handleEndCall = useCallback(() => {
+    try {
+      if (currentCallId) {
+      }
+      if (socket?.emit) {
+        socket.emit('call:end', {
+          to: user.id,
+          type: callType,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      setCallStatus((prev) => (prev === 'connected' ? 'ended' : 'cancelled'));
+      clearCallTimers();
+      scheduleCallTimeout(() => {
+        closeCallModal();
+      }, 600);
+    } catch (err) {
+    }
+  }, [socket, user.id, callType, clearCallTimers, scheduleCallTimeout, closeCallModal, currentCallId, callAPI]);
+
+  const toggleMute = useCallback(() => {
+    if (callControlsDisabled) return;
+    setIsMuted((prev) => !prev);
+  }, [callControlsDisabled]);
+
+  const toggleSpeaker = useCallback(() => {
+    if (callControlsDisabled) return;
+    setIsSpeakerOn((prev) => !prev);
+  }, [callControlsDisabled]);
+
+  const toggleCamera = useCallback(() => {
+    if (callControlsDisabled) return;
+    setIsCameraOn((prev) => !prev);
+  }, [callControlsDisabled]);
+
+  // Вычисляем отступы для контента FlatList
+  const getContentContainerPadding = () => {
+    return 12 + (insets.bottom || 0);
+  };
+
+  // Таймер для отсчёта времени звонка
+  useEffect(() => {
+    if (callStatus === 'connected' && callModalVisible) {
+      const interval = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [callStatus, callModalVisible]);
+
+  return (
+    <GestureHandlerRootView style={[{ flex: 1 }, { backgroundColor: theme.background }]}>
+      <View style={[styles.header, { backgroundColor: getAdaptiveColors().headerBg, paddingTop: insets.top }]}>
+        <View style={styles.headerContent}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color={'#FF9500'} />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.groupInfo}
+            onPress={() => setShowProfileModal(true)}
+          >
+            {displayAvatar ? (
+              <Image source={{ uri: displayAvatar }} style={styles.groupAvatarImage} />
+            ) : (
+              <View style={styles.groupAvatar}>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: getAdaptiveColors().headerText }}>
+                  {displayInitial}
+                </Text>
+              </View>
+            )}
+            <View>
+              <Text style={[styles.headerTitle, { color: getAdaptiveColors().headerText }]}>{displayName}</Text>
+              {isGroup ? (
+                <Text style={[styles.memberCount, { color: getAdaptiveColors().lightText }]}>
+                  {memberCount} участников
+                </Text>
+              ) : (
+                <>
+                  {isUserTyping ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <TypingIndicator isHeaderMode={true} />
+                    </View>
+                  ) : (
+                    <Text style={[styles.memberCount, { color: getAdaptiveColors().lightText }]}>
+                      {contactOnline ? 'В сети' : formatLastSeen(lastSeenTime)}
+                    </Text>
+                  )}
+                </>
+              )}
+            </View>
+          </TouchableOpacity>
+          {!isGroup && (
+            <>
+              <TouchableOpacity 
+                style={{ marginRight: 8 }}
+                onPress={() => initiateCall('audio')}
+              >
+                <Ionicons name="call" size={20} color={'#FF9500'} />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={{ marginRight: 8 }}
+                onPress={() => initiateCall('video')}
+              >
+                <Ionicons name="videocam" size={20} color={'#FF9500'} />
+              </TouchableOpacity>
+            </>
+          )}
+          <TouchableOpacity onPress={handleGroupMenu}>
+            <Ionicons name="ellipsis-vertical" size={20} color={'#FF9500'} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <KeyboardAvoidingView 
+        style={[styles.container, { flex: 1, backgroundColor: theme.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <SafeAreaView edges={['left', 'right', 'bottom']} style={[styles.container, { flex: 1, backgroundColor: theme.background }]}>
+          <View style={[styles.chatContainer, { flex: 1, backgroundColor: getBackgroundColor() }]}>
+          {/* Панель закреплённых сообщений */}
+          <PinnedMessagesBar 
+            pinnedMessages={messages.filter(m => pinnedMessages.includes(m.id))}
+            onPinnedMessagePress={(message) => {
+              // Скролим к закреплённому сообщению
+              const index = messages.findIndex(m => m.id === message.id);
+              if (index > -1 && flatListRef.current) {
+                flatListRef.current.scrollToIndex({ index, animated: true });
+              }
+            }}
+            onUnpin={(messageId) => {
+              togglePinnedMessage(messageId);
+            }}
+          />
+
+          {/* Индикатор загрузки медиа */}
+          {mediaUploadProgress && (
+            <View style={[styles.mediaUploadContainer, { backgroundColor: theme.primary + '10', borderBottomColor: theme.primary + '30' }]}>
+              <View style={styles.mediaUploadContent}>
+                <View style={[styles.mediaUploadIcon, { backgroundColor: theme.primary + '20' }]}>
+                  {mediaUploadProgress.type === 'video' ? (
+                    <Ionicons name="videocam" size={20} color={theme.primary} />
+                  ) : (
+                    <Ionicons name="image" size={20} color={theme.primary} />
+                  )}
+                </View>
+                <View style={styles.mediaUploadInfo}>
+                  <Text style={[styles.mediaUploadTitle, { color: theme.text }]}>
+                    {mediaUploadProgress.type === 'video' ? '🎥 Загрузка видео' : '📸 Загрузка фото'}
+                  </Text>
+                  <View style={styles.progressBarContainer}>
+                    <View style={[styles.progressBar, { backgroundColor: theme.primary + '30' }]}>
+                      <View 
+                        style={[
+                          styles.progressBarFill, 
+                          { backgroundColor: theme.primary, width: `${mediaUploadProgress.progress}%` }
+                        ]} 
+                      />
+                    </View>
+                    <Text style={[styles.progressPercent, { color: theme.primary }]}>
+                      {mediaUploadProgress.progress}%
+                    </Text>
+                  </View>
+                  <View style={styles.mediaUploadStats}>
+                    <Text style={[styles.mediaUploadStat, { color: theme.textSecondary }]}>
+                      {mediaUploadProgress.speed}
+                    </Text>
+                    <Text style={[styles.mediaUploadStat, { color: theme.textSecondary }]}>
+                      осталось {mediaUploadProgress.timeRemaining}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id.toString()}
+            extraData={messages}
+            style={styles.messagesList}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.messagesContainer, 
+              { paddingBottom: getContentContainerPadding() }
+            ]}
+            onContentSizeChange={() => scrollToBottom()}
+            onLayout={() => scrollToBottom()}
+            onViewableItemsChanged={handleViewableItemsChanged}
+            viewabilityConfig={{
+              itemVisiblePercentThreshold: 50, // Считаем видимым если 50% элемента на экране
+              waitForInteraction: false
+            }}
+            scrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+          />
+          
+          {/* Контейнер для поля ввода */}
+          <View 
+            style={[styles.inputContainer, { backgroundColor: theme.background }]}
+          >
+            {isRecordingVoice && (
+              <View style={[styles.voiceRecordingPanel, { backgroundColor: theme.primary + '10', borderBottomColor: theme.primary + '30' }]}>
+                <Animated.View 
+                  style={[
+                    styles.recordingIndicatorDot,
+                    { backgroundColor: '#EF4444', transform: [{ scale: pulseAnim }] }
+                  ]}
+                />
+                <View style={styles.recordingStatusText}>
+                  <Text style={[styles.recordingTitle, { color: getAdaptiveColors().textColor }]}>🎤 Запись голоса</Text>
+                  <Text style={[styles.recordingSubtext, { color: getAdaptiveColors().lightText }]}>
+                    Время: {Math.floor(voiceRecordingDuration)}с
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.recordingCancelBtn, { backgroundColor: theme.accent + '20' }]}
+                  onPress={async () => {
+                    if (voiceRecordingIntervalRef.current) {
+                      clearInterval(voiceRecordingIntervalRef.current);
+                      voiceRecordingIntervalRef.current = null;
+                    }
+                    setIsRecordingVoice(false);
+                    await audioRecorder.cancelRecording();
+                    isProcessingVoiceRef.current = false;
+                  }}
+                >
+                  <Ionicons name="close" size={18} color={theme.accent} />
+                </TouchableOpacity>
+              </View>
+            )}
+            {replyToMessage && (
+              <View style={[styles.replyPreview, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.replyLabel, { color: '#667eea' }]}>Ответ на:</Text>
+                <Text style={[styles.replyPreviewText, { color: theme.text }]}>{replyToMessage.message}</Text>
+                <TouchableOpacity onPress={() => setReplyToMessage(null)}>
+                  <Ionicons name="close" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <View style={[styles.inputWrapper, { backgroundColor: getAdaptiveColors().inputBg }]}>
+              <TouchableOpacity style={styles.mediaButton} onPress={pickMedia}>
+                <Ionicons name="attach" size={20} color="#667eea" />
+              </TouchableOpacity>
+              <TextInput
+                ref={newMessageInputRef}
+                style={[styles.textInput, { color: getAdaptiveColors().textColor }]}
+                value={newMessage}
+                onChangeText={(text) => {
+                  setNewMessage(text);
+                  
+                  // Отправляем событие "печатает"
+                  if (socket) {
+                    if (isGroup) {
+                      socket.emit('group_user_typing', { 
+                        group_id: user.id,
+                        user_id: currentUser?.id,
+                        username: currentUser?.username,
+                        is_typing: text.length > 0
+                      });
+                    } else {
+                      socket.emit('user_typing', { 
+                        from_user_id: currentUser?.id,
+                        from_user_username: currentUser?.username,
+                        to_user_id: user.id,
+                        is_typing: text.length > 0
+                      });
+                    }
+                  }
+                  
+                  // Отменяем предыдущий таймер
+                  if (typingTimeoutRef.current) {
+                    clearTimeout(typingTimeoutRef.current);
+                  }
+                  
+                  // Устанавливаем новый таймер для отправки события "перестал печатать"
+                  if (text.length > 0) {
+                    typingTimeoutRef.current = setTimeout(() => {
+                      if (socket) {
+                        if (isGroup) {
+                          socket.emit('group_user_typing', { 
+                            group_id: user.id,
+                            user_id: currentUser?.id,
+                            is_typing: false
+                          });
+                        } else {
+                          socket.emit('user_typing', { 
+                            from_user_id: currentUser?.id,
+                            from_user_username: currentUser?.username,
+                            to_user_id: user.id,
+                            is_typing: false
+                          });
+                        }
+                      }
+                    }, 3000);
+                  }
+                }}
+                placeholder="Сообщение..."
+                placeholderTextColor={getAdaptiveColors().lightText}
+                multiline
+                maxLength={1000}
+              />
+              <TouchableOpacity 
+                style={styles.voiceButton}
+                onPressIn={handleVoiceButtonPressIn}
+                onPressOut={handleVoiceButtonPressOut}
+                activeOpacity={0.7}
+              >
+                {isRecordingVoice ? (
+                  <View style={[styles.voiceRecordingIndicator, { backgroundColor: theme.primary + '20' }]}>
+                    <Animated.View 
+                      style={[
+                        styles.recordingPulse,
+                        { transform: [{ scale: pulseAnim }] }
+                      ]}
+                    >
+                      <View style={[styles.recordingDot, { backgroundColor: '#EF4444' }]} />
+                    </Animated.View>
+                    <Text style={[styles.recordingTime, { color: '#EF4444' }]}>
+                      {Math.floor(voiceRecordingDuration)}s
+                    </Text>
+                  </View>
+                ) : (
+                  <Ionicons name="mic" size={16} color="#667eea" />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sendButton} onPress={() => sendMessage()}>
+                <Ionicons name="send" size={16} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+          </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
+
+        {/* Меню чата */}
+        <Modal
+          visible={chatMenuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setChatMenuVisible(false)}
+        >
+          <TouchableOpacity 
+            style={styles.menuBackdrop}
+            activeOpacity={1}
+            onPress={() => setChatMenuVisible(false)}
+          >
+            <View style={[styles.chatMenu, { backgroundColor: theme.surface }]}>
+              {!isGroup && (
+                <>
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      // Действие для очистки чата
+                      info('Очистить чат', 'Вы уверены что хотите очистить историю чата?', {
+                        buttons: [
+                          { text: 'Отмена', color: '#ccc' },
+                          {
+                            text: 'Очистить',
+                            color: '#FF9500',
+                            onPress: handleClearChat
+                          }
+                        ],
+                        autoClose: false
+                      });
+                    }}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>Очистить чат</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      setSearchModalVisible(true);
+                      setSearchQuery('');
+                      setSearchResults([]);
+                    }}
+                  >
+                    <Ionicons name="search-outline" size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>Поиск в чате</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      // Переключаем уведомления
+                      toggleNotifications(!notificationsEnabled);
+                    }}
+                  >
+                    <Ionicons name={notificationsEnabled ? "notifications" : "notifications-off-outline"} size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>
+                      {notificationsEnabled ? 'Отключить уведомления' : 'Включить уведомления'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={[styles.menuItem, styles.menuItemDanger]}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      info('Удалить чат', 'Вы уверены что хотите удалить этот чат?', {
+                        buttons: [
+                          { text: 'Отмена', color: '#ccc' },
+                          {
+                            text: 'Удалить',
+                            color: '#FF3B30',
+                            onPress: handleDeleteChat
+                          }
+                        ],
+                        autoClose: false
+                      });
+                    }}
+                  >
+                    <Ionicons name="remove-circle-outline" size={20} color="#FF3B30" />
+                    <Text style={[styles.menuItemText, { color: '#FF3B30' }]}>Удалить чат</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              {isGroup && (
+                <>
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      warning('Группа', 'Информация о группе');
+                    }}
+                  >
+                    <Ionicons name="information-circle-outline" size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>Информация</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      setMembersLoading(true);
+                      fetchGroupMembers({ skipSpinner: false });
+                    }}
+                  >
+                    <Ionicons name="people-outline" size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>Участники</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={[styles.menuItem, styles.menuItemDanger]}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      info('Выйти из группы', 'Вы уверены что хотите выйти из группы?', {
+                        buttons: [
+                          { text: 'Отмена', color: '#ccc' },
+                          {
+                            text: 'Выйти',
+                            color: '#FF3B30',
+                            onPress: async () => {
+                              try {
+                                await groupAPI.leaveGroup(user.id);
+                                success('Успех', 'Вы вышли из группы');
+                                navigation.goBack();
+                              } catch (err) {
+                                error('Ошибка', 'Не удалось выйти из группы');
+                              }
+                            }
+                          }
+                        ],
+                        autoClose: false
+                      });
+                    }}
+                  >
+                    <Ionicons name="exit-outline" size={20} color="#FF3B30" />
+                    <Text style={[styles.menuItemText, { color: '#FF3B30' }]}>Выйти из группы</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* Модаль поиска */}
+        <Modal
+          visible={searchModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setSearchModalVisible(false)}
+        >
+          <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+            <View style={[styles.modalHeader, { backgroundColor: theme.surface }]}>
+              <TouchableOpacity 
+                onPress={() => setSearchModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="arrow-back" size={24} color={theme.text} />
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Поиск в чате</Text>
+              <View style={{ width: 24 }} />
+            </View>
+
+            {/* Поисковая строка */}
+            <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+              <Ionicons name="search" size={20} color={theme.textSecondary} style={{ marginRight: 10 }} />
+              <TextInput
+                style={[styles.searchInput, { color: theme.text }]}
+                placeholder="Поиск сообщений..."
+                placeholderTextColor={theme.textSecondary}
+                value={searchQuery}
+                onChangeText={handleSearchChange}
+                autoFocus
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => {
+                  setSearchQuery('');
+                  setSearchResults([]);
+                }}>
+                  <Ionicons name="close-circle" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Результаты поиска */}
+            <FlatList
+              data={searchResults}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.searchResultItem, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}
+                  onPress={() => {
+                    setSearchModalVisible(false);
+                    flatListRef.current?.scrollToIndex({
+                      index: messages.findIndex(m => m.id === item.id),
+                      animated: true,
+                      viewPosition: 0.5,
+                    });
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.searchResultText, { color: theme.text }]} numberOfLines={2}>
+                      {item.message}
+                    </Text>
+                    <Text style={[styles.searchResultTime, { color: theme.textSecondary }]}>
+                      {new Date(item.created_at).toLocaleString('ru-RU')}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+              )}
+              keyExtractor={(item) => item.id.toString()}
+              ListEmptyState={
+                searchQuery.length > 0 ? (
+                  <View style={[styles.emptySearchState, { backgroundColor: theme.background }]}>
+                    <Ionicons name="search" size={48} color={theme.textSecondary} />
+                    <Text style={[styles.emptySearchText, { color: theme.textSecondary }]}>
+                      Нет результатов поиска
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={[styles.emptySearchState, { backgroundColor: theme.background }]}>
+                    <Ionicons name="search" size={48} color={theme.textSecondary} />
+                    <Text style={[styles.emptySearchText, { color: theme.textSecondary }]}>
+                      Введите текст для поиска
+                    </Text>
+                  </View>
+                )
+              }
+              contentContainerStyle={{ flexGrow: 1 }}
+            />
+          </SafeAreaView>
+        </Modal>
+        
+        <Modal
+          visible={showProfileModal}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setShowProfileModal(false)}
+        >
+          <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+            <View style={[styles.modalHeader, { backgroundColor: theme.surface }]}>
+              <TouchableOpacity 
+                onPress={() => setShowProfileModal(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="arrow-back" size={24} color={theme.text} />
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Профиль</Text>
+              <View style={{ width: 24 }} />
+            </View>
+            
+            <View style={[styles.profileContent, { backgroundColor: theme.background }]}>
+              {/* Avatar Section */}
+              <View style={[styles.profileHeader, { backgroundColor: theme.surface }]}>
+                <TouchableOpacity 
+                  onPress={isGroup ? pickGroupAvatar : null}
+                  disabled={!isGroup || groupAvatarUpdating}
+                  style={{ position: 'relative' }}
+                >
+                  {displayAvatar ? (
+                    <Image source={{ uri: displayAvatar }} style={styles.profileAvatar} />
+                  ) : (
+                    <View style={[
+                      styles.profileAvatarPlaceholder,
+                      { backgroundColor: theme.primary }
+                    ]}>
+                      <Text style={styles.profileAvatarText}>{displayInitial}</Text>
+                    </View>
+                  )}
+                  {isGroup && (
+                    <View style={[styles.avatarEditBadge, { backgroundColor: theme.primary }]}>
+                      {groupAvatarUpdating ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name="camera" size={16} color="#fff" />
+                      )}
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <Text style={[styles.profileName, { color: theme.text }]}>{displayName}</Text>
+                {isGroup ? (
+                  <Text style={[styles.profileEmail, { color: theme.textSecondary }]}>
+                    {memberCount} участников
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={[styles.profileEmail, { color: theme.textSecondary }]}>
+                      {user.email || 'Не указан'}
+                    </Text>
+                    {contactOnline && (
+                      <View style={[styles.statusBadge, { backgroundColor: theme.success }]}>
+                        <Text style={styles.statusBadgeText}>В сети</Text>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+              
+              {!isGroup && (
+                <View style={[styles.profileActionsCard, { backgroundColor: theme.surface }]}>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      (friendStatus === 'friend' || friendStatus === 'pending' || friendRequestLoading) && styles.actionButtonDisabled,
+                    ]}
+                    onPress={handleSendFriendRequest}
+                    disabled={friendStatus !== 'none' || friendRequestLoading}
+                  >
+                    <View style={[styles.actionIcon, { backgroundColor: theme.primary + '20' }]}>
+                      <Ionicons
+                        name={
+                          friendStatus === 'friend'
+                            ? 'checkmark'
+                            : friendStatus === 'pending'
+                            ? 'time'
+                            : 'person-add'
+                        }
+                        size={20}
+                        color={
+                          friendStatus === 'friend'
+                            ? theme.success
+                            : friendStatus === 'pending'
+                            ? theme.textSecondary
+                            : theme.primary
+                        }
+                      />
+                    </View>
+                    <Text style={[
+                      styles.actionText,
+                      { color: theme.text },
+                      (friendStatus === 'friend' || friendStatus === 'pending') && { color: theme.textSecondary }
+                    ]}>
+                      {friendRequestLoading
+                        ? 'Отправка...'
+                        : friendStatus === 'friend'
+                        ? 'В друзьях'
+                        : friendStatus === 'pending'
+                        ? 'Заявка отправлена'
+                        : 'Добавить в друзья'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              
+              <View style={[styles.profileInfo, { backgroundColor: theme.surface }]}>
+                {isGroup ? (
+                  <>
+                    {/* Add Members Button - Top Action */}
+                    <TouchableOpacity 
+                      style={[styles.addMembersFloatingButton, { backgroundColor: theme.primary }]}
+                      onPress={openAddMembersModal}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="person-add" size={24} color="#fff" />
+                      <Text style={styles.addMembersFloatingButtonText}>Добавить</Text>
+                    </TouchableOpacity>
+
+                    {/* Members List Section */}
+                    <View style={styles.groupMembersSection}>
+                      <View style={styles.groupMembersHeader}>
+                        <Text style={[styles.groupMembersTitle, { color: theme.text }]}>
+                          👥 Участники ({memberCount})
+                        </Text>
+                        <TouchableOpacity
+                          onPress={refreshGroupMembers}
+                          style={[styles.groupMembersRefreshButton, { borderColor: theme.primary }]}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          {membersLoading ? (
+                            <ActivityIndicator size="small" color={theme.primary} />
+                          ) : (
+                            <Ionicons name="refresh" size={18} color={theme.primary} />
+                          )}
+                        </TouchableOpacity>
+                      </View>
+
+                      {Array.isArray(groupMembers) && groupMembers.length > 0 ? (
+                        <ScrollView
+                          style={styles.groupMembersScroll}
+                          contentContainerStyle={styles.groupMembersScrollContent}
+                          showsVerticalScrollIndicator={false}
+                          scrollEnabled={true}
+                        >
+                          {groupMembers.map((member, index) => (
+                            <View
+                              key={`group-member-${member.id}`}
+                              style={[
+                                styles.groupMemberCard,
+                                {
+                                  backgroundColor: theme.background,
+                                  borderColor: theme.border,
+                                }
+                              ]}
+                            >
+                              <View style={{ position: 'relative' }}>
+                                {member.avatar ? (
+                                  <Image source={{ uri: member.avatar }} style={styles.memberCardAvatar} />
+                                ) : (
+                                  <View style={[styles.memberCardPlaceholder, { backgroundColor: theme.primary }]}>
+                                    <Text style={styles.memberCardInitial}>
+                                      {member.username?.[0]?.toUpperCase?.() || 'U'}
+                                    </Text>
+                                  </View>
+                                )}
+                                {member.is_online && (
+                                  <View style={[styles.onlineBadge, { backgroundColor: '#4CAF50' }]} />
+                                )}
+                              </View>
+                              
+                              <View style={styles.memberCardContent}>
+                                <View style={styles.memberCardHeader}>
+                                  <Text style={[styles.memberCardName, { color: theme.text }]} numberOfLines={1}>
+                                    {member.username}
+                                  </Text>
+                                  {member.role === 'admin' && (
+                                    <View style={[styles.memberBadge, { backgroundColor: theme.primary + '25' }]}>
+                                      <Text style={[styles.memberBadgeText, { color: theme.primary }]}>👑</Text>
+                                    </View>
+                                  )}
+                                </View>
+                                
+                                <View style={styles.memberCardStatus}>
+                                  {member.is_online ? (
+                                    <>
+                                      <View style={[styles.statusDot, { backgroundColor: '#4CAF50' }]} />
+                                      <Text style={[styles.statusText, { color: '#4CAF50' }]}>В сети</Text>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <View style={[styles.statusDot, { backgroundColor: '#9E9E9E' }]} />
+                                      <Text style={[styles.statusText, { color: '#9E9E9E' }]}>Оффлайн</Text>
+                                    </>
+                                  )}
+                                </View>
+                              </View>
+
+                              <TouchableOpacity 
+                                style={[styles.memberRemoveButton, { backgroundColor: '#FF6B6B' }]}
+                                onPress={() => handleRemoveMember(member.id, member.username)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              >
+                                <Ionicons name="close" size={18} color="#fff" />
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                        </ScrollView>
+                      ) : (
+                        <View style={styles.emptyMembersContainer}>
+                          <Ionicons name="people-outline" size={48} color={theme.textSecondary} />
+                          <Text style={[styles.emptyMembersText, { color: theme.textSecondary }]}>
+                            Нет участников
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <TouchableOpacity style={styles.infoItem} onPress={openUserProfileScreen}>
+                      <View style={[styles.infoIcon, { backgroundColor: theme.primary + '15' }]}>
+                        <Ionicons name="information-circle" size={20} color={theme.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.infoLabel, { color: theme.text }]}>О пользователе</Text>
+                        {user.bio && (
+                          <Text style={[styles.infoBio, { color: theme.textSecondary }]} numberOfLines={2}>
+                            {user.bio}
+                          </Text>
+                        )}
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={theme.textLight} />
+                    </TouchableOpacity>
+                    <View style={styles.infoItem}>
+                      <View style={styles.notificationRowLeft}>
+                        <View style={[styles.infoIcon, { backgroundColor: theme.primary + '15' }]}>
+                          <Ionicons name="notifications" size={20} color={theme.primary} />
+                        </View>
+                        <View style={styles.notificationTextBlock}>
+                          <Text style={[styles.infoLabel, { color: theme.text }]}>Уведомления</Text>
+                          <Text style={[styles.notificationSubtext, { color: theme.textSecondary }]}>
+                            Получать уведомления о новых сообщениях
+                          </Text>
+                        </View>
+                      </View>
+                      {notificationsLoading ? (
+                        <ActivityIndicator size="small" color={theme.primary} />
+                      ) : (
+                        <Switch
+                          value={notificationsEnabled}
+                          onValueChange={toggleNotifications}
+                          trackColor={{ false: theme.textLight, true: theme.primary }}
+                          thumbColor="#fff"
+                        />
+                      )}
+                    </View>
+
+                    <View style={styles.infoItem}>
+                      <View style={[styles.infoIcon, { backgroundColor: theme.primary + '15' }]}>
+                        <Ionicons name="shield-checkmark" size={20} color={theme.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.infoLabel, { color: theme.text }]}>Конфиденциальность</Text>
+                        <Text style={[styles.infoSubtext, { color: theme.textSecondary }]}>Приватный чат</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={theme.textLight} />
+                    </View>
+                  </>
+                )}
+              </View>
+            </View>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal
+          visible={addMembersModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={closeAddMembersModal}
+        >
+          <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+            <View style={[styles.modalHeader, { backgroundColor: theme.surface }]}>
+              <TouchableOpacity onPress={closeAddMembersModal}>
+                <Ionicons name="close" size={24} color={theme.text} />
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Добавить участников</Text>
+              <View style={{ width: 24 }} />
+            </View>
+            <View style={styles.modalContent}>
+              <View style={[styles.searchInputContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Ionicons name="search" size={18} color={theme.textSecondary} />
+                <TextInput
+                  style={[styles.searchInput, { color: theme.text }]}
+                  placeholder="Поиск по друзьям..."
+                  placeholderTextColor={theme.textSecondary}
+                  value={addMembersQuery}
+                  onChangeText={setAddMembersQuery}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+                {addMembersQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setAddMembersQuery('')}>
+                    <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {addMembersLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={theme.primary} />
+                </View>
+              ) : (
+                <FlatList
+                  data={filteredAvailableMembers}
+                  renderItem={renderAvailableMemberItem}
+                  keyExtractor={(item) => `candidate-${item.id}`}
+                  contentContainerStyle={styles.membersList}
+                  keyboardShouldPersistTaps="handled"
+                  ListHeaderComponent={
+                    <View style={styles.addMembersHint}>
+                      <Ionicons name="information-circle" size={16} color={theme.textSecondary} />
+                      <Text style={[styles.addMembersHintText, { color: theme.textSecondary }]}>
+                        Нажмите «Добавить», чтобы сразу пригласить друга в группу.
+                      </Text>
+                    </View>
+                  }
+                  ListEmptyComponent={
+                    <View style={styles.modalEmptyState}>
+                      <Ionicons name={availableMembers.length === 0 ? 'person-add-outline' : 'search'} size={48} color={theme.textSecondary} />
+                      <Text style={[styles.modalEmptyText, { color: theme.textSecondary }]}>
+                        {availableMembers.length === 0
+                          ? 'Нет друзей, которых можно добавить в эту группу'
+                          : 'Не найдено участников по вашему запросу'}
+                      </Text>
+                    </View>
+                  }
+                />
+              )}
+            </View>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal
+          visible={callModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={handleEndCall}
+        >
+          <LinearGradient
+            colors={callGradient}
+            style={styles.callModalBackdrop}
+          >
+            <View style={[styles.callModalCard, { backgroundColor: callCardBackground }]}>
+              <View style={styles.callModalHeaderRow}>
+                <View />
+                <TouchableOpacity onPress={handleEndCall} activeOpacity={0.7}>
+                  <Ionicons name="close" size={24} color={callPrimaryText} />
+                </TouchableOpacity>
+              </View>
+              {displayAvatar ? (
+                <Image source={{ uri: displayAvatar }} style={styles.callModalAvatarImage} />
+              ) : (
+                <View style={styles.callModalAvatarPlaceholder}>
+                  <Text style={styles.callModalAvatarText}>{displayInitial}</Text>
+                </View>
+              )}
+              <Text style={[styles.callModalName, { color: callPrimaryText }]} numberOfLines={1}>
+                {displayName}
+              </Text>
+              <Text style={[styles.callModalStatus, { color: callSecondaryText }]}>
+                {callStatusLabel}
+              </Text>
+              {callStatus === 'connected' ? (
+                <Text style={[styles.callModalTimer, { color: callPrimaryText }]}>
+                  {formatCallDuration(callDuration)}
+                </Text>
+              ) : (
+                <Text style={[styles.callModalHint, { color: callSecondaryText }]}>
+                  {callType === 'video' ? 'Видео вызов' : 'Голосовой вызов'}
+                </Text>
+              )}
+
+              <View style={styles.callControlsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.callControlButton,
+                    isMuted && styles.callControlButtonActive,
+                    callControlsDisabled && styles.callControlDisabled,
+                  ]}
+                  onPress={toggleMute}
+                  activeOpacity={0.85}
+                  disabled={callControlsDisabled}
+                >
+                  <Ionicons
+                    name={isMuted ? 'mic-off' : 'mic'}
+                    size={24}
+                    color="#ffffff"
+                  />
+                  <Text style={styles.callControlLabel}>
+                    {isMuted ? 'Микрофон выкл.' : 'Микрофон'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.callControlButton,
+                    isSpeakerOn && styles.callControlButtonActive,
+                    callControlsDisabled && styles.callControlDisabled,
+                  ]}
+                  onPress={toggleSpeaker}
+                  activeOpacity={0.85}
+                  disabled={callControlsDisabled}
+                >
+                  <Ionicons
+                    name={isSpeakerOn ? 'volume-high' : 'volume-medium'}
+                    size={24}
+                    color="#ffffff"
+                  />
+                  <Text style={styles.callControlLabel}>
+                    {isSpeakerOn ? 'Громкая связь' : 'Динамик'}
+                  </Text>
+                </TouchableOpacity>
+
+                {callType === 'video' && (
+                  <TouchableOpacity
+                    style={[
+                      styles.callControlButton,
+                      !isCameraOn && styles.callControlButtonActive,
+                      callControlsDisabled && styles.callControlDisabled,
+                    ]}
+                    onPress={toggleCamera}
+                    activeOpacity={0.85}
+                    disabled={callControlsDisabled}
+                  >
+                    <Ionicons
+                      name={isCameraOn ? 'videocam' : 'videocam-off'}
+                      size={24}
+                      color="#ffffff"
+                    />
+                    <Text style={styles.callControlLabel}>
+                      {isCameraOn ? 'Камера' : 'Камера выкл.'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={styles.callEndButton}
+                onPress={handleEndCall}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="call" size={28} color="#fff" style={styles.callEndIcon} />
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        </Modal>
+
+        <MediaCaptionModal
+          visible={mediaCaptionModalVisible}
+          onClose={() => {
+            setMediaCaptionModalVisible(false);
+            setPendingMediaUri(null);
+            setPendingMediaType(null);
+          }}
+          onSend={handleMediaCaptionSend}
+          mediaUri={pendingMediaUri}
+          mediaType={pendingMediaType}
+          theme={theme}
+        />
+
+        <VoiceRecorderModal
+          visible={voiceRecorderModalVisible}
+          onCancel={() => setVoiceRecorderModalVisible(false)}
+          onSend={handleVoiceMessageSend}
+          theme={theme}
+        />
+
+        <PinVisibilityModal
+          visible={pinVisibilityModalVisible}
+          onClose={() => {
+            setPinVisibilityModalVisible(false);
+            setPendingPinMessageId(null);
+          }}
+          onSelect={(isVisibleToAll) => {
+            if (pendingPinMessageId) {
+              togglePinnedMessage(pendingPinMessageId, isVisibleToAll);
+              setPendingPinMessageId(null);
+            }
+          }}
+          theme={theme}
+        />
+
+        {/* Модаль полноэкранного просмотра фото */}
+        <Modal
+          visible={fullscreenPhotoVisible}
+          animationType="fade"
+          transparent={false}
+          onRequestClose={() => setFullscreenPhotoVisible(false)}
+        >
+          <View style={styles.fullscreenPhotoContainer}>
+            {/* Кнопка закрытия */}
+            <TouchableOpacity 
+              onPress={() => setFullscreenPhotoVisible(false)}
+              style={styles.fullscreenCloseButtonFloat}
+            >
+              <Ionicons name="close" size={28} color={'#FF9500'} />
+            </TouchableOpacity>
+
+            {/* Фото по центру */}
+            {selectedPhotoUri && (
+              <Image 
+                source={{ uri: selectedPhotoUri }}
+                style={styles.fullscreenPhoto}
+                resizeMode="contain"
+              />
+            )}
+
+            {/* Нижняя панель с функциями */}
+            <View style={styles.fullscreenButtonsPanel}>
+              <TouchableOpacity 
+                style={styles.fullscreenActionButton}
+                onPress={() => {
+                  Share.share({
+                    url: selectedPhotoUri,
+                    message: 'Посмотрите это фото!'
+                  }).catch(err => console.error(err));
+                }}
+              >
+                <Ionicons name="share-social" size={24} color={'#FF9500'} />
+                <Text style={styles.fullscreenActionButtonText}>Поделиться</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.fullscreenActionButton}
+                onPress={async () => {
+                    try {
+                      await navigator.clipboard.writeText(selectedPhotoUri);
+                      success('Скопировано', 'URL фото скопирован в буфер обмена');
+                    } catch (err) {
+                      console.error('Ошибка копирования:', err);
+                    }
+                  }}
+                >
+                  <Ionicons name="copy" size={24} color={'#FF9500'} />
+                  <Text style={styles.fullscreenActionButtonText}>Копировать URL</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.fullscreenActionButton}
+                  onPress={async () => {
+                    try {
+                      const permissions = await MediaLibrary.requestPermissionsAsync();
+                      if (permissions.granted) {
+                        await MediaLibrary.saveToLibraryAsync(selectedPhotoUri);
+                        success('Сохранено', 'Фото сохранено в галерею');
+                      }
+                    } catch (err) {
+                      console.error('Ошибка сохранения:', err);
+                    }
+                  }}
+                >
+                  <Ionicons name="download" size={24} color={'#FF9500'} />
+                  <Text style={styles.fullscreenActionButtonText}>Сохранить</Text>
+                </TouchableOpacity>
+              </View>
+          </View>
+        </Modal>
+
+        {/* Модаль редактирования сообщения */}
+        <Modal
+          visible={editModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            setEditModalVisible(false);
+            setEditingMessage(null);
+            setEditingText('');
+          }}
+        >
+          <TouchableOpacity 
+            style={styles.editModalBackdrop}
+            activeOpacity={1}
+            onPress={() => {
+              setEditModalVisible(false);
+              setEditingMessage(null);
+              setEditingText('');
+            }}
+          >
+            <View style={[styles.editModalCard, { backgroundColor: theme.surface }]}>
+              <View style={styles.editModalHeader}>
+                <Text style={[styles.editModalTitle, { color: theme.text }]}>
+                  Редактировать сообщение
+                </Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    setEditModalVisible(false);
+                    setEditingMessage(null);
+                    setEditingText('');
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+
+              {editingMessage && (
+                <>
+                  <View style={[styles.editMessagePreview, { backgroundColor: theme.background }]}>
+                    <Text style={[styles.editPreviewLabel, { color: theme.textSecondary }]}>
+                      Исходное сообщение:
+                    </Text>
+                    <Text 
+                      style={[styles.editPreviewText, { color: theme.text }]}
+                      numberOfLines={3}
+                    >
+                      {editingMessage.message}
+                    </Text>
+                  </View>
+
+                  <TextInput
+                    style={[styles.editMessageInput, { 
+                      color: theme.text,
+                      borderColor: theme.primary
+                    }]}
+                    value={editingText}
+                    onChangeText={setEditingText}
+                    placeholder="Новое сообщение..."
+                    placeholderTextColor={theme.textSecondary}
+                    multiline
+                    maxLength={1000}
+                  />
+
+                  <Text style={[styles.editCharCount, { color: theme.textSecondary }]}>
+                    {editingText.length}/1000
+                  </Text>
+
+                  <View style={styles.editModalButtons}>
+                    <TouchableOpacity
+                      style={[styles.editCancelBtn, { backgroundColor: theme.background + '80' }]}
+                      onPress={() => {
+                        setEditModalVisible(false);
+                        setEditingMessage(null);
+                        setEditingText('');
+                      }}
+                    >
+                      <Text style={[styles.editCancelBtnText, { color: theme.text }]}>
+                        Отмена
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.editSaveBtn, { backgroundColor: theme.primary }]}
+                      onPress={() => editMessage(editingMessage.id, editingText)}
+                    >
+                      <Ionicons name="checkmark" size={20} color="#fff" style={{ marginRight: 6 }} />
+                      <Text style={styles.editSaveBtnText}>Сохранить</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+    </GestureHandlerRootView>
+  );
+};
+
+const { width } = Dimensions.get('window');
+
+const styles = StyleSheet.create({
+  dateSeparatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 24,
+    paddingHorizontal: 15,
+  },
+  groupMembersTextBlock: {
+    marginLeft: 10,
+  },
+  notificationRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  notificationTextBlock: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  notificationSubtext: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  dateSeparatorLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(102, 126, 234, 0.15)',
+  },
+  dateSeparatorBadge: {
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(102, 126, 234, 0.12)',
+    borderRadius: 20,
+    marginHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(102, 126, 234, 0.25)',
+  },
+  dateSeparatorText: {
+    fontSize: 12,
+    color: '#667eea',
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  container: {
+    flex: 1,
+  },
+  header: {
+    paddingTop: 12,
+    paddingBottom: 20,
+    backgroundColor: '#1a2e4a',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 149, 0, 0.15)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  headerButton: {
+    padding: 10,
+    marginHorizontal: 6,
+    borderRadius: 12,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  backButton: {
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 149, 0, 0.1)',
+  },
+  userInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 16,
+  },
+  userInfoText: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  groupInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 16,
+    gap: 12,
+  },
+  groupAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 0,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 149, 0, 0.3)',
+  },
+  groupAvatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    marginRight: 0,
+  },
+  avatarNew: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  avatarPlaceholderNew: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 149, 0, 0.3)',
+  },
+  avatarTextNew: {
+    color: '#FF9500',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  headerTitleNew: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  onlineStatusNew: {
+    fontSize: 12,
+    color: '#c5d0e0',
+  },
+  memberCount: {
+    fontSize: 12,
+    color: '#c5d0e0',
+  },
+  statusRowNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 6,
+  },
+  statusIndicatorNew: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#4CAF50',
+  },
+  typingContainerHeader: {
+    marginTop: 2,
+    minHeight: 12,
+    justifyContent: 'flex-start',
+  },
+  moreButton: {
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 149, 0, 0.1)',
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 10,
+  },
+  avatarPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 149, 0, 0.3)',
+    shadowColor: '#FF9500',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  avatarText: {
+    color: '#FF9500',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+    letterSpacing: 0.3,
+  },
+  onlineStatus: {
+    fontSize: 13,
+    color: '#c5d0e0',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  statusIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+    backgroundColor: '#4CAF50',
+  },
+  unreadBadgeSmall: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+    paddingHorizontal: 6,
+    backgroundColor: '#FF9500',
+  },
+  unreadTextSmall: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  moreButton: {
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 149, 0, 0.1)',
+  },
+  chatContainer: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  messagesList: {
+    flex: 1,
+    paddingHorizontal: 12,
+  },
+  messagesContainer: {
+    paddingVertical: 12,
+    flexGrow: 1,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    marginVertical: 4,
+    alignItems: 'flex-end',
+    position: 'relative',
+  },
+  sentRow: {
+    justifyContent: 'flex-end',
+  },
+  receivedRow: {
+    justifyContent: 'flex-start',
+  },
+  groupMessageRow: {
+    alignItems: 'flex-start',
+    width: '100%',
+    paddingLeft: 44,
+  },
+  senderAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#667eea',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  senderAvatarText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  groupAvatarWrapper: {
+    position: 'absolute',
+    left: 0,
+    top: 2,
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupAvatarImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+  },
+  groupAvatarPlaceholder: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  groupAvatarInitial: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  messageContainer: {
+    maxWidth: width * 0.82,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    marginHorizontal: 2,
+    flexShrink: 1,
+  },
+  sentContainer: {
+    alignSelf: 'flex-end',
+    maxWidth: width * 0.78,
+  },
+  receivedContainer: {
+    alignSelf: 'flex-start',
+    maxWidth: width * 0.68,
+  },
+  sentMessage: {
+    borderBottomRightRadius: 6,
+    borderTopLeftRadius: 24,
+    backgroundColor: '#667eea',
+  },
+  receivedMessage: {
+    borderBottomLeftRadius: 6,
+    borderTopRightRadius: 24,
+    backgroundColor: '#f0f2f7',
+  },
+  messageText: {
+    fontSize: 15,
+    lineHeight: 21,
+    letterSpacing: 0.1,
+  },
+  groupMessageContent: {
+    flexShrink: 1,
+    maxWidth: width * 0.85,
+  },
+  groupMessageContentWithAvatar: {
+    flex: 1,
+  },
+  sentText: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  receivedText: {
+    color: '#1a202c',
+    fontWeight: '500',
+  },
+  messageTime: {
+    fontSize: 12,
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  sentTime: {
+    color: 'rgba(255,255,255,0.75)',
+  },
+  receivedTime: {
+    color: '#718096',
+  },
+  messageTimeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    alignSelf: 'flex-end',
+    gap: 4,
+  },
+  messageCheckmark: {
+    fontSize: 11,
+    marginLeft: 4,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    color: '#FFFFFF', // Белый цвет
+  },
+  sentCheckmark: {
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  checkmarkContainer: {
+    marginLeft: 3,
+  },
+  checkmarkDouble: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '600',
+  },
+  inputContainer: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
+    shadowColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#f7f8fc',
+    borderRadius: 24,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    marginHorizontal: 12,
+    marginVertical: 0,
+    marginBottom: 12,
+    gap: 4,
+    shadowColor: '#667eea',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  textInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1a202c',
+    maxHeight: 90,
+    minHeight: 40,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    lineHeight: 20,
+    fontWeight: '400',
+    backgroundColor: 'transparent',
+    borderRadius: 20,
+    borderWidth: 0,
+    paddingLeft: 8,
+  },
+  voiceButton: {
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+  },
+  voiceRecordingIndicator: {
+    borderRadius: 20,
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  recordingPulse: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  recordingTime: {
+    fontSize: 12,
+    fontWeight: '600',
+    minWidth: 18,
+  },
+  sendButton: {
+    backgroundColor: '#667eea',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    marginRight: 0,
+    shadowColor: '#667eea',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  mediaButton: {
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+  },
+  modalContainer: {
+    flex: 1,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  profileContent: {
+    flex: 1,
+    paddingTop: 12,
+    paddingHorizontal: 12,
+  },
+  profileHeader: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  profileAvatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    marginBottom: 12,
+  },
+  profileAvatarPlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  profileAvatarText: {
+    color: '#fff',
+    fontSize: 40,
+    fontWeight: '700',
+  },
+  profileName: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  profileEmail: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  statusBadge: {
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  statusBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  profileActionsCard: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  profileActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e1e5e9',
+  },
+  actionButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+  },
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
+  actionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  actionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  profileInfo: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  infoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  infoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  infoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  infoBio: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  infoSubtext: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  infoText: {
+    fontSize: 16,
+    flex: 1,
+  },
+  replyContainer: {
+    padding: 10,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#667eea',
+    opacity: 0.9,
+  },
+  replyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  replyAuthor: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  replyAuthorSent: {
+    color: 'rgba(255,255,255,0.9)',
+  },
+  replyAuthorReceived: {
+  },
+  replyText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  replyTextSent: {
+    color: 'rgba(255,255,255,0.8)',
+  },
+  replyTextReceived: {
+  },
+  voiceRecordingPanel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1.5,
+    marginBottom: 8,
+    borderRadius: 12,
+    marginHorizontal: 10,
+    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#667eea',
+  },
+  recordingIndicatorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 12,
+    flexShrink: 0,
+  },
+  recordingStatusText: {
+    flex: 1,
+  },
+  recordingTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+    color: '#1a202c',
+  },
+  recordingSubtext: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#718096',
+  },
+  recordingCancelBtn: {
+    borderRadius: 18,
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    marginHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#667eea',
+    backgroundColor: '#f7f8fc',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  replyLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginRight: 8,
+    color: '#667eea',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  replyPreviewText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#4a5568',
+    fontWeight: '500',
+  },
+  messageImage: {
+    width: width * 0.7,
+    height: width * 0.6,
+    borderRadius: 14,
+    marginBottom: 8,
+  },
+  captionText: {
+    fontSize: 14,
+    lineHeight: 18,
+    marginTop: 6,
+    marginBottom: 4,
+    fontWeight: '400',
+  },
+  groupSenderLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 4,
+    letterSpacing: 0.2,
+  },
+  groupSenderLabelSent: {
+    color: 'rgba(255,255,255,0.85)',
+  },
+  messageVideo: {
+    width: width * 0.7,
+    height: width * 0.6,
+    borderRadius: 14,
+    marginBottom: 8,
+    backgroundColor: '#000',
+  },
+  videoContainer: {
+    width: width * 0.7,
+    height: width * 0.6,
+    borderRadius: 14,
+    marginBottom: 8,
+    backgroundColor: '#000',
+    overflow: 'hidden',
+  },
+  videoPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1a202c',
+  },
+  videoText: {
+    color: '#fff',
+    fontSize: 14,
+    marginTop: 8,
+    fontWeight: '500',
+  },
+  mediaButton: {
+    padding: 8,
+    marginLeft: 2,
+    borderRadius: 16,
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+  },
+  groupMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  groupMembersSection: {
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 16,
+  },
+  addMembersFloatingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  addMembersFloatingButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  groupMembersHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  groupMemberCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  memberCardAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    marginRight: 12,
+  },
+  memberCardPlaceholder: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  memberCardInitial: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  memberCardContent: {
+    flex: 1,
+  },
+  memberCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  memberCardName: {
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  memberBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  memberBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  memberCardStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  memberRemoveButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  onlineBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  emptyMembersContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  emptyMembersText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 12,
+  },
+  groupMembersTitleBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  groupMembersTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  groupMembersSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  groupMembersRefreshButton: {
+    padding: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+  },
+  groupMembersScroll: {
+    maxHeight: 320,
+  },
+  groupMembersScrollContent: {
+    paddingVertical: 2,
+  },
+  groupMemberAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    marginRight: 12,
+  },
+  groupMemberPlaceholder: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  groupMemberInitial: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  groupMemberInfo: {
+    flex: 1,
+  },
+  groupMemberName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  groupMemberRole: {
+    fontSize: 13,
+  },
+  groupMemberMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  memberRoleChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  memberRoleChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  memberOnlineBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    marginLeft: 4,
+  },
+  memberOnlineText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  membersList: {
+    paddingVertical: 8,
+  },
+  modalEmptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  modalEmptyText: {
+    fontSize: 15,
+    textAlign: 'center',
+    marginTop: 12,
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    marginHorizontal: 8,
+  },
+  addMembersHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  addMembersHintText: {
+    fontSize: 13,
+    flex: 1,
+  },
+  addMemberButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#667eea',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  addMemberButtonDisabled: {
+    opacity: 0.6,
+  },
+  addMemberButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  callModalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  callModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 28,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+    backgroundColor: 'rgba(17,24,39,0.88)',
+  },
+  callModalHeaderRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  callModalAvatarImage: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  callModalAvatarPlaceholder: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    marginTop: 12,
+    marginBottom: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  callModalAvatarText: {
+    fontSize: 38,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  callModalName: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  callModalStatus: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  callModalTimer: {
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 20,
+  },
+  callModalHint: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  callControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginBottom: 24,
+  },
+  callControlButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginHorizontal: 6,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  callControlButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  callControlDisabled: {
+    opacity: 0.45,
+  },
+  callControlLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  callEndButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callEndIcon: {
+    transform: [{ rotate: '135deg' }],
+    color: '#ffffff',
+  },
+  menuBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 60,
+    paddingRight: 10,
+  },
+  chatMenu: {
+    borderRadius: 12,
+    width: 220,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  menuItemDanger: {
+    borderBottomWidth: 0,
+  },
+  menuItemText: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginLeft: 12,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    paddingVertical: 8,
+    marginHorizontal: 8,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  searchResultText: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  searchResultTime: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  emptySearchState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  emptySearchText: {
+    fontSize: 16,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  contextMenuBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  contextMenu: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    minWidth: 220,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  contextMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  contextMenuItemDanger: {
+    borderBottomWidth: 0,
+  },
+  contextMenuItemText: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 14,
+    letterSpacing: 0.1,
+  },
+  mediaUploadContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1.5,
+    marginBottom: 8,
+    borderRadius: 12,
+    marginHorizontal: 10,
+    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#667eea',
+  },
+  mediaUploadContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  mediaUploadIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    backgroundColor: 'rgba(102, 126, 234, 0.2)',
+  },
+  mediaUploadInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  mediaUploadTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 6,
+    color: '#1a202c',
+  },
+  progressBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  progressBar: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(102, 126, 234, 0.15)',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#667eea',
+  },
+  progressPercent: {
+    fontSize: 12,
+    fontWeight: '700',
+    minWidth: 35,
+    textAlign: 'right',
+    color: '#667eea',
+  },
+  mediaUploadStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  mediaUploadStat: {
+    fontSize: 11,
+    color: '#718096',
+    fontWeight: '500',
+  },
+  // Стили для полноэкранного просмотра фото
+  fullscreenPhotoContainer: {
+    flex: 1,
+    backgroundColor: '#0a1428',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenCloseButtonFloat: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(26, 46, 74, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+  },
+  fullscreenPhoto: {
+    width: '100%',
+    height: '80%',
+  },
+  fullscreenButtonsPanel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    backgroundColor: '#1a2e4a',
+    borderTopWidth: 1.5,
+    borderTopColor: 'rgba(255, 149, 0, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    paddingBottom: 20,
+    gap: 10,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  fullscreenActionButton: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: '#FF9500',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 149, 0, 0.08)',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  fullscreenActionButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 6,
+    textAlign: 'center',
+    letterSpacing: 0.2,
+    color: '#FF9500',
+  },
+  
+  // ✏️ Стили для редактирования сообщений
+  editModalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 20,
+  },
+  editModalCard: {
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    width: '100%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  editModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  editMessagePreview: {
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#667eea',
+  },
+  editPreviewLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  editPreviewText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  editMessageInput: {
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    minHeight: 100,
+    maxHeight: 200,
+    marginBottom: 8,
+    textAlignVertical: 'top',
+  },
+  editCharCount: {
+    fontSize: 12,
+    textAlign: 'right',
+    marginBottom: 16,
+  },
+  editModalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  editCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  editCancelBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  editSaveBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  editSaveBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // ✏️ Индикатор редактирования сообщения
+  editedIndicator: {
+    fontSize: 10,
+    marginLeft: 4,
+    fontWeight: '500',
+    marginRight: 2,
+  },
+  editedIndicatorSent: {
+    color: 'rgba(255, 255, 255, 0.7)',
+  },
+  editedIndicatorReceived: {
+    color: '#999999',
+  },
+  
+  // 🎥 Ошибка загрузки видео
+  videoErrorContainer: {
+    width: width * 0.7,
+    height: width * 0.6,
+    borderRadius: 14,
+    marginBottom: 8,
+    backgroundColor: '#f0f2f7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FF6B6B',
+    borderStyle: 'dashed',
+    padding: 12,
+  },
+  videoErrorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 10,
+    textAlign: 'center',
+    color: '#FF6B6B',
+  },
+  videoErrorUrl: {
+    fontSize: 11,
+    marginTop: 6,
+    textAlign: 'center',
+    fontFamily: 'monospace',
+    color: '#999',
+  },
+});
+
+export default ChatScreen;

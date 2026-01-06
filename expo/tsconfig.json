@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": [
+      "ES2020"
+    ],
+    "jsx": "react-native",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "composite": false,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*",
+    "App.js",
+    "index.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "**/__tests__/*",
+    "**/__mocks__/*"
+  ],
+  "extends": "expo/tsconfig.base"
+}
