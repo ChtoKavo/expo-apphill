@@ -204,6 +204,12 @@ const ChatScreen = ({ route, navigation }) => {
   const insets = useSafeAreaInsets();
   const newMessageInputRef = useRef(null); // 🆕 Ref для TextInput сообщения
   
+  // ⚡ ПАГИНАЦИЯ СООБЩЕНИЙ: Загружаем только последние 50 сообщений
+  const [messagesPage, setMessagesPage] = useState(1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const MESSAGES_PER_PAGE = 50;
+  
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   
@@ -772,29 +778,49 @@ const ChatScreen = ({ route, navigation }) => {
       return;
     }
 
-    loadMessages();
-    loadPinnedMessages();
-    loadUnreadCount();
+    // ⚡ ОПТИМИЗАЦИЯ: Загружаем ВСЕ данные параллельно вместо последовательной загрузки
+    const initializeChatData = async () => {
+      try {
+        // Вызываем все запросы одновременно (Promise.all для параллелизма)
+        const promises = [
+          loadMessages(),
+          loadPinnedMessages(),
+          loadUnreadCount(),
+        ];
+
+        // Добавляем getUserStatus только для личных чатов
+        if (!isGroup) {
+          promises.push(
+            userAPI.getUserStatus(user.id)
+              .then(response => {
+                setContactOnline(response.data?.is_online ?? true);
+                if (response.data?.last_seen) {
+                  setLastSeenTime(response.data.last_seen);
+                }
+              })
+              .catch(err => {
+                if (err.response?.status === 404) {
+                  setContactOnline(true);
+                }
+              })
+          );
+        }
+
+        // Ждём ПЕРВЫЙ ответ - загрузка сообщений САМАЯ КРИТИЧНАЯ
+        // Остальные будут завершены параллельно
+        await Promise.race([promises[0]]);
+        
+      } catch (error) {
+        if (__DEV__) console.error('Ошибка при инициализации данных чата:', error);
+      }
+    };
+
+    // Запускаем инициализацию
+    initializeChatData();
 
     const visitKey = isGroup ? `group_visit_${user.id}` : `chat_visit_${user.id}`;
     AsyncStorage.setItem(visitKey, new Date().toISOString()).catch(err => {
     });
-
-    if (!isGroup) {
-      userAPI.getUserStatus(user.id)
-        .then(response => {
-          setContactOnline(response.data?.is_online ?? true);
-          if (response.data?.last_seen) {
-            setLastSeenTime(response.data.last_seen);
-          }
-        })
-        .catch(err => {
-          if (err.response?.status === 404) {
-            setContactOnline(true);
-          } else {
-          }
-        });
-    }
 
     let isMounted = true;
     let socketConnection = null;
@@ -813,16 +839,15 @@ const ChatScreen = ({ route, navigation }) => {
 
         socketConnection = sharedSocket;
         setSocket(sharedSocket);
-        
-        // 🔍 ДИАГНОСТИКА СОКЕТА
-
-        // ✅ ДИАГНОСТИКА: Слушаем все события на этом экране
-        sharedSocket.onAny((eventName, ...args) => {
-          if (eventName.includes('read') || eventName.includes('status') || eventName.includes('message')) {
-          }
-        });
 
         const handleConnect = () => {
+          console.log('\n' + '🔌'.repeat(35));
+          console.log('✅ [SOCKET] Подключение установлено!');
+          console.log('   Socket ID:', sharedSocket.id);
+          console.log('   Connected:', sharedSocket.connected);
+          console.log('   Текущий пользователь:', currentUser?.id);
+          console.log('   Чат с:', user.id, isGroup ? '(группа)' : '(личный)');
+          console.log('🔌'.repeat(35) + '\n');
           
           // 🔑 КРИТИЧНО: Первый шаг - аутентификация
           if (currentUser?.id) {
@@ -841,11 +866,24 @@ const ChatScreen = ({ route, navigation }) => {
           setTimeout(() => {
             if (isGroup) {
               sharedSocket.emit('join_group_room', user.id);
+              console.log('✅ Присоединились к групповой комнате:', user.id);
             } else {
-              // ✅ КРИТИЧНОЕ: Присоединяемся к личной комнате
-              sharedSocket.emit('join_personal_room', user.id);
+              // ✅ КРИТИЧНОЕ: Присоединяемся к НЕСКОЛЬКИМ комнатам для личного чата
               
+              // 1. Комната для получения сообщений ОТ собеседника
+              sharedSocket.emit('join_personal_room', user.id);
+              console.log('✅ Присоединились к комнате собеседника:', user.id);
+              
+              // 2. Подписываемся на статус собеседника
               sharedSocket.emit('subscribe_user_status', user.id);
+              
+              // 3. ⭐ НОВОЕ: Подписываемся на события чтения для этого чата
+              sharedSocket.emit('subscribe_read_status', {
+                user_id: currentUser?.id,
+                other_user_id: user.id,
+                chat_type: 'personal'
+              });
+              console.log('✅ Подписались на события чтения для чата:', user.id);
             }
           }, 100); // Задержка 100ms для гарантии обработки аутентификации
           
@@ -987,11 +1025,37 @@ const ChatScreen = ({ route, navigation }) => {
               // ⭐ Исправляем IP в URL перед добавлением сообщения
               const normalizedMessage = normalizeMessageMediaUrl(message);
               
-              const exists = prev.some(msg => msg.id === normalizedMessage.id);
+              // ⭐ УЛУЧШЕННАЯ ПРОВЕРКА: учитываем временные ID (temp-*)
+              const exists = prev.some(msg => {
+                // Если это date separator - пропускаем
+                if (msg.type === 'date') return false;
+                // Если это временное сообщение - не проверяем на совпадение по ID
+                if (msg.id && typeof msg.id === 'string' && msg.id.startsWith('temp-')) {
+                  return false;
+                }
+                return msg.id === normalizedMessage.id;
+              });
+              
               if (exists) {
                 return prev;
               }
               
+              // Если это наше отправленное сообщение, заменяем временное ID на реальный
+              if (normalizedMessage.sender_id === currentUser?.id) {
+                return prev.map(msg => {
+                  // Пропускаем date separators
+                  if (msg.type === 'date') return msg;
+                  // Ищем временное сообщение для замены
+                  if (msg.id && typeof msg.id === 'string' && msg.id.startsWith('temp-') && 
+                      msg.message === normalizedMessage.message &&
+                      msg.created_at && normalizedMessage.created_at &&
+                      Math.abs(new Date(msg.created_at).getTime() - new Date(normalizedMessage.created_at).getTime()) < 5000) {
+                    // Это наше сообщение с временным ID - заменяем на реальное
+                    return normalizedMessage;
+                  }
+                  return msg;
+                });
+              }
 
               if (normalizedMessage.sender_id !== currentUser.id) {
                 const senderName = isGroup ? (normalizedMessage.sender_username || displayName) : displayName;
@@ -1018,16 +1082,6 @@ const ChatScreen = ({ route, navigation }) => {
         // ✅ ИСПРАВЛЕНИЕ: Регистрируем ОБА обработчика ВСЕГДА
         registerHandler('new_group_message', handleNewMessage);
         registerHandler('new_message', handleNewMessage);
-
-        // 🔴 КРИТИЧНА ДИАГНОСТИКА: Слушаем напрямую на сокете для отладки
-        if (sharedSocket && isGroup) {
-          
-          sharedSocket.on('new_group_message', (data) => {
-          });
-
-          sharedSocket.on('message_read_status_updated', (data) => {
-          });
-        }
 
         if (!isGroup) {
           const handleTyping = (data) => {
@@ -1114,8 +1168,24 @@ const ChatScreen = ({ route, navigation }) => {
           registerHandler('call_ended', handleCallEnded);
         }
 
-        // Регистрируем обработчик статуса чтения сообщений (для всех чатов)
+        // ⭐ КРИТИЧНО: Регистрируем обработчик статуса чтения
+        // Сначала удаляем старый слушатель (если был)
+        sharedSocket.off('message_read_status_updated');
+
+        // Регистрируем новый слушатель НАПРЯМУЮ на сокет
+        sharedSocket.on('message_read_status_updated', (data) => {
+          console.log('\n' + '🔔'.repeat(35));
+          console.log('📨 [SOCKET] message_read_status_updated ПОЛУЧЕНО!');
+          console.log('   Payload:', JSON.stringify(data, null, 2));
+          console.log('🔔'.repeat(35) + '\n');
+          
+          handleMessageReadStatusUpdated(data);
+        });
+
+        // Также регистрируем через registerHandler для cleanup
         registerHandler('message_read_status_updated', handleMessageReadStatusUpdated);
+
+        console.log('✅ Слушатель message_read_status_updated зарегистрирован');
 
         // 📌 НОВОЕ: Обработчик синхронизации закреплённых сообщений
         const handleMessagePinned = (data) => {
@@ -1214,17 +1284,34 @@ const ChatScreen = ({ route, navigation }) => {
         const handleMessageDeleted = (data) => {
           console.log('🗑️ [DEBUG] Получено событие message_deleted:', data);
           
-          const { message_id, chat_type } = data;
+          const { message_id, chat_type, other_user_id, group_id } = data;
           
-          // Проверяем что это сообщение из нашего чата
-          const messageExists = messages.some(msg => msg.id === message_id);
-          if (!messageExists) {
-            console.log('🗑️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+          // ⭐ КРИТИЧНО: Проверяем что событие для нашего чата
+          let isForThisChat = false;
+          
+          if (chat_type === 'group' && group_id) {
+            isForThisChat = isGroup && Number(group_id) === Number(user.id);
+          } else if (chat_type === 'personal' && other_user_id) {
+            isForThisChat = !isGroup && Number(other_user_id) === Number(user.id);
+          } else {
+            // Fallback - пробуем удалить в любом случае
+            isForThisChat = true;
+          }
+          
+          if (!isForThisChat) {
+            console.log('🗑️ [DEBUG] Событие НЕ для этого чата, пропускаем');
             return;
           }
           
-          // Удаляем сообщение из списка
+          // ⭐ КРИТИЧНО: Используем функциональное обновление БЕЗ проверки messageExists
+          // Проверка внутри setMessages гарантирует актуальные данные
           setMessages(prevMessages => {
+            const messageExists = prevMessages.some(msg => msg.id === message_id);
+            if (!messageExists) {
+              console.log('🗑️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+              return prevMessages;
+            }
+            
             const filtered = prevMessages.filter(msg => msg.id !== message_id);
             console.log('🗑️ [DEBUG] Сообщение удалено:', message_id);
             return filtered;
@@ -1237,25 +1324,42 @@ const ChatScreen = ({ route, navigation }) => {
         const handleMessageUpdated = (data) => {
           console.log('✏️ [DEBUG] Получено событие message_updated:', data);
           
-          const { message_id, new_message } = data;
+          const { message_id, new_message, chat_type, other_user_id, group_id } = data;
           
-          // Проверяем что это сообщение из нашего чата
-          const messageExists = messages.some(msg => msg.id === message_id);
-          if (!messageExists) {
-            console.log('✏️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+          // ⭐ КРИТИЧНО: Проверяем что событие для нашего чата
+          let isForThisChat = false;
+          
+          if (chat_type === 'group' && group_id) {
+            isForThisChat = isGroup && Number(group_id) === Number(user.id);
+          } else if (chat_type === 'personal' && other_user_id) {
+            isForThisChat = !isGroup && Number(other_user_id) === Number(user.id);
+          } else {
+            // Fallback - пробуем обновить в любом случае
+            isForThisChat = true;
+          }
+          
+          if (!isForThisChat) {
+            console.log('✏️ [DEBUG] Событие НЕ для этого чата, пропускаем');
             return;
           }
           
-          // Обновляем сообщение в списке
+          // ⭐ КРИТИЧНО: Используем функциональное обновление
           setMessages(prevMessages => {
+            let found = false;
             const updated = prevMessages.map(msg => {
               if (msg.type === 'date') return msg;
               if (msg.id === message_id) {
+                found = true;
                 console.log('✏️ [DEBUG] Сообщение обновлено:', message_id);
                 return { ...msg, message: new_message, is_edited: true };
               }
               return msg;
             });
+            
+            if (!found) {
+              console.log('✏️ [DEBUG] Сообщение не найдено в текущем чате:', message_id);
+            }
+            
             return updated;
           });
         };
@@ -1289,16 +1393,19 @@ const ChatScreen = ({ route, navigation }) => {
         
         registerHandler('chat_cleared', handleChatCleared);
 
-        // 🔴 КРИТИЧНА ДИАГНОСТИКА: Слушаем напрямую на сокете для отладки
-        if (sharedSocket && isGroup) {
-          
-          sharedSocket.on('new_group_message', (data) => {
+        // � ДИАГНОСТИКА: Логируем ВСЕ Socket события для отладки
+        if (__DEV__) {
+          sharedSocket.onAny((eventName, ...args) => {
+            // Фильтруем слишком частые события
+            if (!['ping', 'pong', 'user_typing'].includes(eventName)) {
+              console.log(`📨 [SOCKET EVENT] ${eventName}:`, JSON.stringify(args, null, 2).substring(0, 500));
+            }
           });
-
-          sharedSocket.on('message_read_status_updated', (data) => {
-          });
+          console.log('🔌 Socket подключен:', sharedSocket.connected);
+          console.log('🔌 Socket id:', sharedSocket.id);
         }
       } catch (error) {
+        console.error('❌ Ошибка initializeSocket:', error);
       }
     };
 
@@ -1422,14 +1529,16 @@ const ChatScreen = ({ route, navigation }) => {
   const groupMessagesByDate = (messages) => {
     const grouped = [];
     let currentDate = null;
+    let dateIndex = 0;
     
     messages.forEach(message => {
       const messageDate = new Date(message.created_at).toDateString();
       
       if (messageDate !== currentDate) {
         currentDate = messageDate;
+        dateIndex++;
         grouped.push({
-          id: `date-${message.created_at}`,
+          id: `date-separator-${dateIndex}-${new Date(message.created_at).getTime()}`,
           type: 'date',
           date: message.created_at
         });
@@ -1441,23 +1550,118 @@ const ChatScreen = ({ route, navigation }) => {
     return grouped;
   };
 
-  const loadMessages = async () => {
+  const loadMessages = async (pageNum = 1) => {
     try {
+      // ⚡ ОПТИМИЗАЦИЯ: Сначала показываем кэшированные сообщения, потом загружаем свежие
+      if (pageNum === 1) {
+        try {
+          const cacheKey = isGroup ? `group_messages_cache_${user.id}` : `messages_cache_${user.id}`;
+          const cached = await AsyncStorage.getItem(cacheKey);
+          if (cached) {
+            const cachedMessages = JSON.parse(cached);
+            const groupedMessages = groupMessagesByDate(cachedMessages);
+            setMessages(groupedMessages);
+            // Скролим вниз для кэшированных сообщений
+            setTimeout(() => scrollToBottom(), 100);
+          }
+        } catch (cacheErr) {
+          // Игнорируем ошибки кэша
+        }
+      }
+
+      // Загружаем только последние N сообщений
       const response = isGroup 
-        ? await groupAPI.getGroupMessages(user.id)
-        : await messageAPI.getMessages(user.id);
+        ? await groupAPI.getGroupMessages(user.id, { page: pageNum, limit: MESSAGES_PER_PAGE })
+        : await messageAPI.getMessages(user.id, { page: pageNum, limit: MESSAGES_PER_PAGE });
       
-      // 🔧 ИСПРАВЛЕНИЕ: Нормализуем is_read и исправляем IP в URL видео
-      const correctedMessages = (response.data || []).map(msg => ({
-        ...msg,
-        is_read: Boolean(msg.is_read),  // Конвертим 0/1 → boolean
-        media_url: normalizeMediaUrl(msg.media_url)  // ⭐ Заменяем неправильный IP
-      }));
+      const messages = Array.isArray(response.data) ? response.data : [];
       
+      // ⚡ Кэшируем свежие сообщения
+      if (pageNum === 1 && messages.length > 0) {
+        try {
+          const cacheKey = isGroup ? `group_messages_cache_${user.id}` : `messages_cache_${user.id}`;
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(messages));
+        } catch (cacheErr) {
+          // Игнорируем ошибки кэша
+        }
+      }
+      
+      // ⚡ ЕСЛИ ПЕРВАЯ СТРАНИЦА - ПОЛНАЯ ЗАГРУЗКА
+      // ЕСЛИ ПОСЛЕДУЮЩИЕ - ДОБАВЛЯЕМ В НАЧАЛО
+      if (pageNum === 1) {
+        setHasMoreMessages(messages.length >= MESSAGES_PER_PAGE);
+      } else {
+        setHasMoreMessages(messages.length >= MESSAGES_PER_PAGE);
+      }
+      
+      // 🔧 ИСПРАВЛЕНИЕ: Правильная обработка is_read при загрузке
+      const correctedMessages = messages.map(msg => {
+        const isSentByMe = msg.sender_id === currentUser?.id;
+        
+        // ⭐ КРИТИЧНО: Конвертируем 0/1 в boolean ПРАВИЛЬНО
+        // Для МОИХ сообщений: is_read означает что СОБЕСЕДНИК прочитал
+        // Для ВХОДЯЩИХ сообщений: is_read означает что Я прочитал
+        let isReadValue = false;
+        
+        if (msg.is_read === true || msg.is_read === 1 || msg.is_read === '1') {
+          isReadValue = true;
+        }
+        
+        return {
+          ...msg,
+          is_read: isReadValue,
+          media_url: normalizeMediaUrl(msg.media_url)
+        };
+      });
+      
+      // Группируем по датам
       const groupedMessages = groupMessagesByDate(correctedMessages);
-      setMessages(groupedMessages);
-      if (groupedMessages.length > 0) {
-        setTimeout(() => scrollToBottom(), 300);
+      
+      // Если первая страница - заменяем все сообщения, иначе добавляем в начало
+      if (pageNum === 1) {
+        setMessages(groupedMessages);
+        if (groupedMessages.length > 0) {
+          setTimeout(() => scrollToBottom(), 300);
+        }
+      } else {
+        // ⭐ ИСПРАВЛЕНИЕ: Удаляем дубликаты
+        setMessages(prev => {
+          // Собираем ID сообщений которые уже есть
+          const existingIds = new Set(
+            prev
+              .filter(m => m.type !== 'date')
+              .map(m => m.id)
+          );
+          
+          // Берём только НОВЫЕ сообщения (которых ещё нет в списке)
+          const newMessages = groupedMessages.filter(m => {
+            if (m.type === 'date') return true;
+            return !existingIds.has(m.id);
+          });
+          
+          // ⭐ ИСПРАВЛЕНИЕ: Удаляем дублирующиеся date separators на границе
+          let result = [...newMessages, ...prev];
+          
+          // Если последний элемент в newMessages это date separator
+          // И первый элемент в prev это date separator для той же даты
+          // То удаляем дублирующийся separator
+          if (newMessages.length > 0 && prev.length > 0) {
+            const lastNew = newMessages[newMessages.length - 1];
+            const firstPrev = prev[0];
+            
+            if (lastNew.type === 'date' && firstPrev.type === 'date') {
+              const lastNewDate = new Date(lastNew.date).toDateString();
+              const firstPrevDate = new Date(firstPrev.date).toDateString();
+              
+              // Если даты одинаковые - удаляем дубликат
+              if (lastNewDate === firstPrevDate) {
+                result = [...newMessages.slice(0, -1), ...prev];
+              }
+            }
+          }
+          
+          return result;
+        });
       }
       
       setReplyToMessage(null);
@@ -1698,128 +1902,259 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   const markMessageAsRead = async (messageId) => {
+    if (!messageId) return;
+    
     try {
-      await messageAPI.markMessageAsRead(messageId);
+      // ⭐ Находим сообщение чтобы получить sender_id и receiver_id
+      const targetMessage = messages.find(m => m.id === messageId && m.type !== 'date');
       
-      // Отправляем событие через Socket.io на сервер
-      if (socket) {
-        socket.emit('mark_message_read', { message_id: messageId });
+      if (!targetMessage) {
+        console.log('⚠️ [markMessageAsRead] Сообщение не найдено:', messageId);
+        return;
       }
       
-      // Обновляем локально
+      // Не отмечаем свои сообщения как прочитанные
+      if (targetMessage.sender_id === currentUser?.id) {
+        return;
+      }
+      
+      // ⭐ Сначала обновляем локально
       setMessages(prev => prev.map(item => {
         if (item.type === 'date') return item;
-        if (item.id === messageId) {
-          return { ...item, is_read: true };  // явно true, не число
+        if (item.id === messageId && !item.is_read) {
+          return { ...item, is_read: true };
         }
         return item;
       }));
+      
+      // Отправляем событие через Socket.io на сервер
+      if (socket && socket.connected) {
+        const eventData = {
+          message_id: messageId,
+          sender_id: targetMessage.sender_id,      // ⭐ Кто отправил сообщение
+          receiver_id: targetMessage.receiver_id,  // ⭐ Кому было отправлено
+          reader_id: currentUser?.id,              // ⭐ Кто прочитал (я)
+          chat_id: user.id,
+          chat_type: 'personal',
+          timestamp: new Date().toISOString()
+        };
+        
+        console.log('📤 [markMessageAsRead] Отправляем mark_message_read:', eventData);
+        socket.emit('mark_message_read', eventData);
+      } else {
+        // Fallback на API
+        console.log('⚠️ [markMessageAsRead] Socket не подключен, используем API');
+        await messageAPI.markMessageAsRead(messageId);
+      }
     } catch (err) {
+      console.error('❌ [markMessageAsRead] Ошибка:', err);
     }
   };
 
   // 🆕 НОВАЯ ФУНКЦИЯ: Отмечать сообщение как прочитанное только когда оно видно на экране
+  const loadMoreMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMoreMessages) return;
+    
+    setIsLoadingMore(true);
+    try {
+      const nextPage = messagesPage + 1;
+      await loadMessages(nextPage);
+      setMessagesPage(nextPage);
+    } catch (error) {
+      if (__DEV__) console.error('Ошибка при загрузке больше сообщений:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMoreMessages, messagesPage]);
+
   const handleViewableItemsChanged = useCallback(({ viewableItems }) => {
-    if (!socket || !currentUser?.id) return;
+    if (!socket?.connected || !currentUser?.id || viewableItems.length === 0) return;
 
     const messagesToMark = [];
+    const messagesData = []; // ⭐ Храним полные данные для Socket
+    const messageIdSet = new Set();
     
     viewableItems.forEach(viewable => {
       const message = viewable.item;
       
-      // Пропускаем служебные сообщения (даты)
-      if (message.type === 'date') return;
+      // Пропускаем служебные сообщения
+      if (!message || message.type === 'date') return;
       
-      // Отмечаем входящие сообщения в поле видимости
-      if (!isGroup && message.sender_id !== currentUser?.id && !message.is_read) {
-        messagesToMark.push(message);
+      // Пропускаем временные ID
+      if (message.id && typeof message.id === 'string' && message.id.startsWith('temp-')) {
+        return;
       }
       
-      // Для групповых чатов - только непрочитанные
-      if (isGroup && !message.is_read && message.sender_id !== currentUser?.id) {
-        messagesToMark.push(message);
+      // Только ВХОДЯЩИЕ непрочитанные сообщения
+      if (!message.is_read && message.sender_id !== currentUser?.id) {
+        if (!messageIdSet.has(message.id)) {
+          messagesToMark.push(message.id);
+          messageIdSet.add(message.id);
+          
+          // ⭐ Сохраняем полные данные для Socket
+          messagesData.push({
+            message_id: message.id,
+            sender_id: message.sender_id,
+            receiver_id: message.receiver_id || currentUser?.id
+          });
+        }
       }
     });
     
     if (messagesToMark.length === 0) return;
     
-    // Отмечаем все видимые сообщения
-    messagesToMark.forEach(message => {
-      
-      // Отправляем события на сервер
-      socket.emit('mark_message_read', { message_id: message.id });
-      
-      // Обновляем локально
-      setMessages(prev => prev.map(msg => {
+    console.log('\n' + '='.repeat(70));
+    console.log('📝 [AUTO_READ] Видимые непрочитанные сообщения:', messagesToMark);
+    console.log('='.repeat(70) + '\n');
+    
+    // ⭐ Отправляем пакет на сервер с ПОЛНЫМИ данными
+    socket.emit('mark_messages_read_batch', { 
+      message_ids: messagesToMark,
+      messages_data: messagesData,  // ⭐ Полные данные о сообщениях
+      reader_id: currentUser?.id,
+      chat_id: user.id,
+      chat_type: isGroup ? 'group' : 'personal',
+      timestamp: new Date().toISOString()
+    });
+    
+    // ⭐ Обновляем локально
+    setMessages(prev => {
+      return prev.map(msg => {
         if (msg.type === 'date') return msg;
-        if (msg.id === message.id) {
+        if (messageIdSet.has(msg.id)) {
           return { ...msg, is_read: true };
         }
         return msg;
-      }));
+      });
     });
     
-    // 📢 Отправляем событие на ChatsListScreen для обновления счётчика
-    if (messagesToMark.length > 0) {
-      const eventData = isGroup 
-        ? { group_id: user.id, unread_count: 0 }
-        : { friend_id: user.id, unread_count: 0 };
-      socket.emit('chat_unread_count_updated', eventData);
-    }
   }, [socket, currentUser?.id, isGroup, user.id]);
 
   // Обработчик события: сообщение прочитано (от сервера)
   const handleMessageReadStatusUpdated = (data) => {
-    const { message_id, is_read, read_by, reader_count, sender_id, receiver_id, group_id } = data;
-    
-    
-    // ПРОВЕРКА: Это событие для нашего чата?
-    let isForThisChat = false;
-    if (group_id) {
-      // Групповой чат
-      isForThisChat = Number(group_id) === Number(user.id);
-    } else if (!isGroup) {
-      // Личный чат - событие от собеседника о том что он прочитал НАШИ сообщения
-      // Наши сообщения имеют sender_id = currentUser.id, receiver_id = user.id
-      // Событие приходит с той же парой IDs
-      isForThisChat = (Number(sender_id) === Number(currentUser?.id) && Number(receiver_id) === Number(user.id)) ||
-                      (Number(sender_id) === Number(user.id) && Number(receiver_id) === Number(currentUser?.id));
-    }
-    
-    if (!isForThisChat) {
+    if (!data || !data.message_id) {
+      console.log('❌ [handleMessageReadStatusUpdated] Некорректные данные:', data);
       return;
     }
     
+    const { 
+      message_id, 
+      is_read, 
+      read_by, 
+      reader_count, 
+      sender_id, 
+      receiver_id, 
+      group_id,
+      reader_id,
+      chat_id
+    } = data;
     
-    // Обновляем сообщение в списке
+    console.log('\n' + '='.repeat(70));
+    console.log('📥 [CHECKMARK] handleMessageReadStatusUpdated получено событие');
+    console.log('   Данные:', JSON.stringify({
+      message_id,
+      is_read,
+      sender_id,
+      receiver_id,
+      reader_id,
+      chat_id,
+      group_id
+    }, null, 2));
+    console.log('   Текущий чат: user.id=' + user.id + ', isGroup=' + isGroup);
+    console.log('   Текущий пользователь: currentUser.id=' + currentUser?.id);
+    console.log('='.repeat(70) + '\n');
+    
+    // ⭐ УЛУЧШЕННАЯ ПРОВЕРКА: Это событие для нашего чата?
+    let isForThisChat = false;
+    
+    if (group_id) {
+      // Для группового чата
+      isForThisChat = Number(group_id) === Number(user.id);
+    } else if (!isGroup) {
+      // Для ЛИЧНОГО чата - проверяем несколько вариантов
+      
+      // Вариант 1: Событие о том что СОБЕСЕДНИК прочитал МОЁ сообщение
+      // sender_id = я (currentUser.id), receiver_id = собеседник (user.id)
+      const isMyMessageReadByThem = 
+        Number(sender_id) === Number(currentUser?.id) && 
+        Number(receiver_id) === Number(user.id);
+      
+      // Вариант 2: Событие о том что Я прочитал сообщение СОБЕСЕДНИКА
+      // sender_id = собеседник (user.id), receiver_id = я (currentUser.id)
+      const isTheirMessageReadByMe = 
+        Number(sender_id) === Number(user.id) && 
+        Number(receiver_id) === Number(currentUser?.id);
+      
+      // Вариант 3: Проверка по chat_id если передан
+      const isChatIdMatch = chat_id && Number(chat_id) === Number(user.id);
+      
+      // Вариант 4: Проверка по reader_id
+      const isReaderMatch = reader_id && (
+        Number(reader_id) === Number(user.id) || 
+        Number(reader_id) === Number(currentUser?.id)
+      );
+      
+      isForThisChat = isMyMessageReadByThem || isTheirMessageReadByMe || isChatIdMatch || isReaderMatch;
+      
+      console.log('   Проверка чата:', {
+        isMyMessageReadByThem,
+        isTheirMessageReadByMe,
+        isChatIdMatch,
+        isReaderMatch,
+        isForThisChat
+      });
+    }
+    
+    if (!isForThisChat) {
+      console.log('   ❌ Событие НЕ для этого чата, пропускаем');
+      return;
+    }
+    
+    console.log('   ✅ Событие ДЛЯ этого чата, обновляем сообщение');
+    
+    // ⭐ КРИТИЧНО: Обновляем состояние с НОВЫМ массивом
     setMessages(prev => {
-      const updated = [];
-      for (let i = 0; i < prev.length; i++) {
-        const msg = prev[i];
-        if (msg.id === message_id) {
-          // Конвертируем is_read в boolean (может быть 0/1 с сервера)
-          const isReadBoolean = Boolean(is_read);
-          // Создаём НОВЫЙ объект
-          const newMsg = {
-            ...msg,
-            is_read: isReadBoolean,
-            read_by: read_by || msg.read_by,
-            reader_count: reader_count || msg.reader_count
-          };
-          updated.push(newMsg);
-        } else {
-          updated.push(msg);
-        }
+      if (!Array.isArray(prev) || prev.length === 0) {
+        console.log('   ⚠️ Массив сообщений пуст');
+        return prev;
       }
       
-      return updated;
+      // Ищем индекс сообщения
+      const messageIndex = prev.findIndex(m => m && m.id === message_id && m.type !== 'date');
+      
+      if (messageIndex === -1) {
+        console.log('   ⚠️ Сообщение ' + message_id + ' не найдено в списке');
+        return prev;
+      }
+      
+      const oldMessage = prev[messageIndex];
+      
+      // ⭐ Конвертируем is_read в boolean
+      const isReadBoolean = is_read === true || is_read === 1 || is_read === '1';
+      
+      // Если значение не изменилось - не обновляем
+      if (oldMessage.is_read === isReadBoolean) {
+        console.log('   ℹ️ Значение is_read не изменилось, пропускаем');
+        return prev;
+      }
+      
+      // Создаём НОВЫЙ массив с обновленным сообщением
+      const newMessages = [...prev];
+      newMessages[messageIndex] = {
+        ...oldMessage,
+        is_read: isReadBoolean,
+        read_by: read_by || oldMessage.read_by || [],
+        reader_count: typeof reader_count === 'number' ? reader_count : (oldMessage.reader_count || 0)
+      };
+      
+      console.log('   ✅ ОБНОВЛЕНО сообщение:', {
+        id: message_id,
+        old_is_read: oldMessage.is_read,
+        new_is_read: isReadBoolean
+      });
+      
+      return newMessages;
     });
-    
-    
-    // 🔍 ДИАГНОСТИКА: Проверяем визуальное обновление
-    setTimeout(() => {
-      const updated = messages.find(m => m.id === message_id);
-    }, 50);
   };
 
   const sendMessage = async (mediaData = null, captionText = null) => {
@@ -1828,11 +2163,58 @@ const ChatScreen = ({ route, navigation }) => {
       return;
     }
     
-    // Скрываем клавиатуру сразу после отправки
-    Keyboard.dismiss();
+    // ⭐ Клавиатура остаётся открытой после отправки для удобства
+    // Keyboard.dismiss(); // Закомментировано по запросу
     
     const messageText = newMessage.trim() || '📎 Медиа';
     setNewMessage('');
+    
+    // ⭐ УНИКАЛЬНЫЙ ID с временной меткой и достаточной энтропией
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    
+    // ⚡ ОПТИМИЗАЦИЯ: Сразу добавляем сообщение в UI без ждания ответа (optimistic update)
+    const optimisticMessage = {
+      id: tempId,
+      message: messageText,
+      created_at: new Date().toISOString(),
+      sender_id: currentUser?.id,
+      sender_username: currentUser?.username || 'Вы',
+      media_type: mediaData?.type || 'text',
+      media_url: mediaData?.url || null,
+      caption: captionText || null,
+      is_read: false,
+      is_edited: false,
+      is_optimistic: true, // ⭐ ФЛАГ для отслеживания оптимистичных сообщений
+      ...(replyToMessage && {
+        reply_to_message: replyToMessage.message || replyToMessage.media_url || '',
+        reply_to_sender: replyToMessage.sender_id === currentUser?.id
+          ? currentUser?.username
+          : replyToMessage.sender_username || (isGroup ? replyToMessage.sender_username : user.username),
+        reply_to_sender_id: replyToMessage.sender_id,
+      })
+    };
+
+    // Добавляем в UI сразу (optimistic update)
+    setMessages(prev => {
+      // Проверяем нужно ли добавить разделитель по датам
+      const lastMessage = prev[prev.length - 1];
+      const newMessageDate = new Date(optimisticMessage.created_at).toDateString();
+      const lastMessageDate = lastMessage && new Date(lastMessage.created_at).toDateString();
+      
+      let updatedMessages = [...prev];
+      if (lastMessageDate && newMessageDate !== lastMessageDate) {
+        updatedMessages.push({
+          id: `date-separator-${new Date(optimisticMessage.created_at).getTime()}`,
+          type: 'date',
+          date: optimisticMessage.created_at
+        });
+      }
+      updatedMessages.push(optimisticMessage);
+      
+      return updatedMessages;
+    });
+    scrollToBottom();
+    setReplyToMessage(null);
     
     try {
       const messageData = {
@@ -1847,67 +2229,35 @@ const ChatScreen = ({ route, navigation }) => {
       const response = await (isGroup 
         ? groupAPI.sendGroupMessage(messageData)
         : messageAPI.sendMessage(messageData));
-      
-      const replyMetadata = replyToMessage
-        ? {
-            reply_to_message: replyToMessage.message || replyToMessage.media_url || '',
-            reply_to_sender: replyToMessage.sender_id === currentUser?.id
-              ? currentUser?.username
-              : replyToMessage.sender_username || (isGroup ? replyToMessage.sender_username : user.username),
-            reply_to_sender_id: replyToMessage.sender_id,
-          }
-        : {};
 
-      const enrichedMessage = {
-        ...response.data,
-        sender_username: currentUser?.username || 'Вы',
-        ...replyMetadata,
-      };
-
-      setMessages(prev => {
-        const exists = prev.some(msg => msg.id === enrichedMessage.id);
-        if (exists) return prev;
-        
-        const lastMessage = prev[prev.length - 1];
-        const newMessageDate = new Date(enrichedMessage.created_at).toDateString();
-        const lastMessageDate = lastMessage && new Date(lastMessage.created_at).toDateString();
-        
-        let updatedMessages = [...prev];
-        if (newMessageDate !== lastMessageDate) {
-          updatedMessages.push({
-            id: `date-${enrichedMessage.created_at}`,
-            type: 'date',
-            date: enrichedMessage.created_at
-          });
+      // ⭐ ИСПРАВЛЕНИЕ: Заменяем временный ID на реальный с полными данными
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === tempId) {
+          // Заменяем временное сообщение на реальное от сервера
+          return {
+            ...response.data,
+            sender_username: currentUser?.username || 'Вы',
+            is_optimistic: false // убираем флаг оптимистичности
+          };
         }
-        updatedMessages.push(enrichedMessage);
-        
-        
-        // Скролл вниз с задержкой чтобы FlatList успел перерендериться
-        setTimeout(() => {
-          scrollToBottom();
-        }, 150);
-        
-        return updatedMessages;
-      });
+        return msg;
+      }));
 
-      // ✅ ВАЖНО: Отправляем событие на сокет чтобы ChatsListScreen обновился!
+      // ✅ Отправляем событие на сокет чтобы ChatsListScreen обновился
       if (socket && socket.connected) {
         socket.emit('message_sent', {
           sender_id: currentUser?.id,
           receiver_id: isGroup ? null : user.id,
           group_id: isGroup ? user.id : null,
           message: messageText,
-          created_at: enrichedMessage.created_at,
-          is_read: enrichedMessage.is_read,
+          created_at: response.data?.created_at,
+          is_read: response.data?.is_read,
         });
       }
       
-      setReplyToMessage(null);
-      
-      // ✅ ВАЖНО: Не используем fallback таймер, сообщение уже добавлено!
-      // Если сокет событие придет - handleNewMessage его проверит по exists
     } catch (error) {
+      // Откатываем оптимистичное обновление при ошибке
+      setMessages(prev => prev.filter(msg => msg.id !== tempId));
       setNewMessage(messageText);
       
       if (error.response?.status === 401) {
@@ -2395,7 +2745,7 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  const SwipeableMessage = ({ item, onReply, showSenderMeta = true }) => {
+  const SwipeableMessage = React.memo(({ item, onReply, showSenderMeta = true }) => {
     const translateX = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(1)).current;
     const opacityAnim = useRef(new Animated.Value(1)).current;
@@ -2495,11 +2845,11 @@ const ChatScreen = ({ route, navigation }) => {
               <View style={styles.replyHeader}>
                 <Ionicons name="return-up-forward" size={12} color={isSent ? 'rgba(255,255,255,0.8)' : '#667eea'} />
                 <Text style={[styles.replyAuthor, isSent ? styles.replyAuthorSent : { ...styles.replyAuthorReceived, color: '#667eea' }]}>
-                  {item.reply_to_sender_id === currentUser?.id ? 'Вы' : (item.reply_to_sender || displayName)}
+                  {item.reply_to_sender_id === currentUser?.id ? 'Вы' : (item.reply_to_sender || displayName || 'Пользователь')}
                 </Text>
               </View>
               <Text style={[styles.replyText, isSent ? styles.replyTextSent : { ...styles.replyTextReceived, color: theme.textSecondary }]}>
-                {item.reply_to_message}
+                {item.reply_to_message || 'Сообщение'}
               </Text>
             </View>
           )}
@@ -2576,7 +2926,7 @@ const ChatScreen = ({ route, navigation }) => {
                   styles.captionText,
                   isSent ? { ...styles.sentText, color: '#ffffff' } : { ...styles.receivedText, color: theme.text }
                 ]}>
-                  {item.caption}
+                  {item.caption || ''}
                 </Text>
               )}
             </View>
@@ -2594,7 +2944,7 @@ const ChatScreen = ({ route, navigation }) => {
               styles.messageText,
               isSent ? { ...styles.sentText, color: '#ffffff' } : { ...styles.receivedText, color: theme.text }
             ]}>
-              {item.message}
+              {item.message || ''}
             </Text>
           )}
           <View style={styles.messageTimeContainer}>
@@ -2614,19 +2964,23 @@ const ChatScreen = ({ route, navigation }) => {
             )}
             {isSent && (
               <View style={styles.checkmarkContainer}>
-                {isGroup && item.reader_count > 0 ? (
-                  // 👥 ДЛЯ ГРУПП: показываем количество прочитавших
-                  <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
-                    ✓✓ ({item.reader_count})
-                  </Text>
-                ) : !isGroup ? (
-                  // ДЛЯ ЛИЧНЫХ ЧАТОВ: показываем одну или две галочки
-                  <>
+                {isGroup ? (
+                  // 👥 ДЛЯ ГРУПП: показываем количество прочитавших или одну галочку
+                  item.reader_count && item.reader_count > 0 ? (
                     <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
-                      {Boolean(item.is_read) ? '✓✓' : '✓'}
+                      ✓✓ ({item.reader_count})
                     </Text>
-                  </>
-                ) : null}
+                  ) : (
+                    <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
+                      ✓
+                    </Text>
+                  )
+                ) : (
+                  // ДЛЯ ЛИЧНЫХ ЧАТОВ: строгая проверка is_read
+                  <Text style={[styles.messageCheckmark, styles.sentCheckmark]}>
+                    {item.is_read === true ? '✓✓' : '✓'}
+                  </Text>
+                )}
               </View>
             )}
           </View>
@@ -2657,10 +3011,10 @@ const ChatScreen = ({ route, navigation }) => {
             ]}>
               {isGroup && showGroupMeta && (
                 <Text style={[styles.groupSenderLabel, { color: theme.textSecondary }]}>
-                  {senderName}
+                  {senderName || ''}
                 </Text>
               )}
-              {messageBubble}
+              {messageBubble || null}
             </View>
           </Animated.View>
         </RNGHPanGestureHandler>
@@ -2733,7 +3087,7 @@ const ChatScreen = ({ route, navigation }) => {
         </Modal>
       </>
     );
-  };
+  });
   
   const formatMessageDate = (date) => {
     const messageDate = new Date(date);
@@ -2754,7 +3108,7 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  const DateSeparator = ({ date }) => (
+  const DateSeparator = React.memo(({ date }) => (
     <View style={styles.dateSeparatorContainer}>
       <View style={styles.dateSeparatorLine} />
       <View style={styles.dateSeparatorBadge}>
@@ -2762,37 +3116,29 @@ const ChatScreen = ({ route, navigation }) => {
       </View>
       <View style={styles.dateSeparatorLine} />
     </View>
-  );
+  ));
 
   const renderItem = React.useCallback(({ item, index }) => {
     if (item.type === 'date') {
-      return <DateSeparator date={item.date} />;
+      return (
+        <View key={`date-separator-${index}-${new Date(item.date).getTime()}`}>
+          <DateSeparator date={item.date} />
+        </View>
+      );
     }
-    
-    // ОТЛАДКА: Логируем изменения is_read для первых 20 сообщений
-    if (item.sender_id === currentUser?.id && item.id <= 20) {
-      if (item.is_read) {
-        // Логируем когда is_read = true
-      }
-    }
-    
+
     let showSenderMeta = true;
     if (!isGroup || item.sender_id === currentUser?.id) {
       showSenderMeta = false;
-    } else if (index !== undefined) {
-      for (let i = index - 1; i >= 0; i -= 1) {
-        const prev = messages[i];
-        if (!prev || prev.type === 'date') {
-          continue;
+    } else if (index !== undefined && index > 0) {
+      // ⚡ ОПТИМИЗАЦИЯ: Проверяем ТОЛЬКО предыдущее сообщение, не весь список
+      const prev = messages[index - 1];
+      if (prev && prev.type !== 'date' && prev.sender_id === item.sender_id) {
+        const prevDate = prev.created_at ? new Date(prev.created_at).toDateString() : null;
+        const currDate = item.created_at ? new Date(item.created_at).toDateString() : null;
+        if (prevDate === currDate) {
+          showSenderMeta = false;
         }
-        if (prev.sender_id === item.sender_id) {
-          const prevDate = prev.created_at ? new Date(prev.created_at).toDateString() : null;
-          const currDate = item.created_at ? new Date(item.created_at).toDateString() : null;
-          if (prevDate === currDate) {
-            showSenderMeta = false;
-          }
-        }
-        break;
       }
     }
 
@@ -2803,7 +3149,7 @@ const ChatScreen = ({ route, navigation }) => {
         showSenderMeta={showSenderMeta}
       />
     );
-  }, [currentUser?.id, displayName, isGroup, messages]);
+  }, [currentUser?.id, isGroup, messages]);
 
   const renderAvailableMemberItem = ({ item }) => {
     const isAdding = addingMemberId === item.id;
@@ -3148,7 +3494,13 @@ const ChatScreen = ({ route, navigation }) => {
             ref={flatListRef}
             data={messages}
             renderItem={renderItem}
-            keyExtractor={(item) => item.id.toString()}
+            keyExtractor={(item, index) => {
+              // ⭐ КРИТИЧНО: Основано на type для уникальных ключей
+              if (item.type === 'date') {
+                return `date-separator-${index}-${new Date(item.date).getTime()}`;
+              }
+              return `message-${item.id}`;
+            }}
             extraData={messages}
             style={styles.messagesList}
             showsVerticalScrollIndicator={false}
@@ -3160,12 +3512,24 @@ const ChatScreen = ({ route, navigation }) => {
             onLayout={() => scrollToBottom()}
             onViewableItemsChanged={handleViewableItemsChanged}
             viewabilityConfig={{
-              itemVisiblePercentThreshold: 50, // Считаем видимым если 50% элемента на экране
+              itemVisiblePercentThreshold: 50,
               waitForInteraction: false
             }}
             scrollEnabled={true}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
+            maxToRenderPerBatch={12}
+            updateCellsBatchingPeriod={50}
+            initialNumToRender={15}
+            removeClippedSubviews={true}
+            windowSize={10}
+            scrollEventThrottle={16}
+            onEndReached={({ distanceFromEnd }) => {
+              if (distanceFromEnd < 100 && hasMoreMessages && !isLoadingMore) {
+                loadMoreMessages();
+              }
+            }}
+            onEndReachedThreshold={0.5}
           />
           
           {/* Контейнер для поля ввода */}

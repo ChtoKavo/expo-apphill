@@ -1468,7 +1468,6 @@ const GroupChatScreen = ({ route, navigation }) => {
             </View>
           )}
 
-          {console.log('🔄 FlatList render: messages.length =', messages.length, 'messages:', messages.map(m => ({id: m.id, sender: m.sender_username})))}
           {messages && messages.length > 0 ? (
             <FlatList
               ref={flatListRef}
@@ -1499,11 +1498,9 @@ const GroupChatScreen = ({ route, navigation }) => {
             {/* Статус печатания */}
             {Object.keys(typingUsers).length > 0 && (
               <View style={[styles.typingIndicatorContainer, { backgroundColor: theme.surface }]}>
-                {console.log(`🎨 Рендерим TypingIndicator, typingUsers:`, typingUsers)}
                 <TypingIndicator theme={theme} users={typingUsers} />
               </View>
             )}
-            {console.log(`📊 typingUsers в render:`, typingUsers, `Keys:`, Object.keys(typingUsers).length)}
             
             {replyToMessage && (
               <View style={[styles.replyPreview, { backgroundColor: theme.surface }]}>

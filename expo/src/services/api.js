@@ -13,10 +13,10 @@ const checkServerAvailability = async () => {
     try {
       await axios.get(`${url}/health`, { timeout: 5000 });
       API_URL = url;
-      console.log('Server available at:', url);
+      if (__DEV__) console.log('Server available at:', url);
       return url;
     } catch (error) {
-      console.log('Server not available at:', url);
+      if (__DEV__) console.log('Server not available at:', url);
     }
   }
   throw new Error('No server available');
@@ -34,13 +34,15 @@ const api = axios.create({
 api.interceptors.request.use(async (config) => {
   try {
     const token = await AsyncStorage.getItem('token');
-    console.log('API Request:', {
-      url: config.url,
-      method: config.method,
-      baseURL: config.baseURL,
-      hasToken: !!token,
-      isFormData: config.data instanceof FormData,
-    });
+    if (__DEV__) {
+      console.log('API Request:', {
+        url: config.url,
+        method: config.method,
+        baseURL: config.baseURL,
+        hasToken: !!token,
+        isFormData: config.data instanceof FormData,
+      });
+    }
     
     // Устанавливаем заголовки для React Native
     config.headers['User-Agent'] = 'ReactNative';
@@ -89,25 +91,24 @@ api.interceptors.request.use(async (config) => {
 
 api.interceptors.response.use(
   (response) => {
-    // Логирование ответа для GET запросов к сообщениям
-    if (response.config.url.includes('/messages') && response.config.method === 'get') {
+    // Логирование ответа для GET запросов к сообщениям (только в dev режиме)
+    if (__DEV__ && response.config.url.includes('/messages') && response.config.method === 'get') {
       if (Array.isArray(response.data)) {
         console.log(`📨 API RESPONSE ${response.config.url}: ${response.data.length} сообщений`);
-        response.data.forEach((msg, idx) => {
-          console.log(`📨 [${idx}] id=${msg.id}, sender=${msg.sender_username}, has_avatar=${!!msg.sender_avatar}`);
-        });
       }
     }
     return response;
   },
   async (error) => {
-    console.log('API Error:', error.response?.data || error.message);
-    console.log('Network Error Details:', {
-      url: error.config?.url,
-      method: error.config?.method,
-      status: error.response?.status,
-      message: error.message
-    });
+    if (__DEV__) {
+      console.log('API Error:', error.response?.data || error.message);
+      console.log('Network Error Details:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        status: error.response?.status,
+        message: error.message
+      });
+    }
 
     if (error.response?.status === 401) {
       try {
@@ -117,7 +118,7 @@ api.interceptors.response.use(
         
         if (refreshToken) {
           // Попытка обновить токен
-          const response = await axios.post(`${API_URL}/refresh-token`, { 
+          const response = await axios.post(`${API_URL}/refresh-token`, {
             refreshToken 
           });
           
@@ -133,7 +134,7 @@ api.interceptors.response.use(
         // Если не удалось обновить токен, очищаем данные авторизации
         await AsyncStorage.multiRemove(['token', 'refreshToken', 'user']);
       } catch (refreshError) {
-        console.error('Ошибка обновления токена:', refreshError);
+        if (__DEV__) console.error('Ошибка обновления токена:', refreshError);
       }
     }
     
@@ -172,7 +173,10 @@ export const userAPI = {
 };
 
 export const messageAPI = {
-  getMessages: (userId) => api.get(`/messages/${userId}`),
+  getMessages: (userId, options = {}) => {
+    const { page = 1, limit = 50 } = options;
+    return api.get(`/messages/${userId}`, { params: { page, limit } });
+  },
   sendMessage: (messageData) => api.post('/messages', messageData),
   deleteMessage: (messageId) => api.delete(`/messages/${messageId}`),
   editMessage: (messageId, newText) => api.put(`/messages/${messageId}`, { message: newText }),
@@ -273,7 +277,10 @@ export const groupAPI = {
   getGroups: () => api.get('/groups'),
   createGroup: (groupData) => api.post('/groups', groupData),
   getGroup: (groupId) => api.get(`/groups/${groupId}`),
-  getGroupMessages: (groupId) => api.get(`/groups/${groupId}/messages`),
+  getGroupMessages: (groupId, options = {}) => {
+    const { page = 1, limit = 50 } = options;
+    return api.get(`/groups/${groupId}/messages`, { params: { page, limit } });
+  },
   sendGroupMessage: (messageData) => api.post(`/groups/${messageData.group_id}/messages`, messageData),
   deleteGroupMessage: (messageId) => api.delete(`/groups/messages/${messageId}`),
   editGroupMessage: (messageId, newText) => api.put(`/groups/messages/${messageId}`, { message: newText }),
@@ -391,7 +398,7 @@ export const communitiesAPI = {
     
     // ✅ Если это FormData, НЕ устанавливаем Content-Type
     if (data instanceof FormData) {
-      console.log('📤 Отправляем сообщество с FormData');
+      if (__DEV__) console.log('📤 Отправляем сообщество с FormData');
       return api.post('/communities', data, {
         ...defaultConfig,
         ...config,

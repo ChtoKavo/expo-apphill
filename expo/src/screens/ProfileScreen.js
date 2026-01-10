@@ -48,7 +48,6 @@ const ProfileScreen = ({ navigation }) => {
   const [chatBackground, setChatBackground] = useState('default');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
-  const [galleryPhotos, setGalleryPhotos] = useState([]);
   
   // RGB управление цветом - ВРЕМЕННЫЕ значения (для предпросмотра)
   const [rgbRed, setRgbRed] = useState(255);
@@ -116,7 +115,7 @@ const ProfileScreen = ({ navigation }) => {
   // Это решает проблему со старым cardColor при смене пользователя
   useFocusEffect(
     React.useCallback(() => {
-      console.log('👁️ ProfileScreen получил фокус - перезагружаем профиль и галерею');
+      console.log('👁️ ProfileScreen получил фокус - перезагружаем профиль');
       loadProfile();
       return () => {
         // Cleanup при потере фокуса
@@ -340,10 +339,6 @@ const ProfileScreen = ({ navigation }) => {
         ...response.data,
         cardColor: cardColor,
       });
-      
-      // ✅ Загружаем галерею ПОСЛЕ успешной загрузки профиля и авторизации
-      console.log('🖼️ ProfileScreen: Профиль загружен, загружаю галерею...');
-      await loadGalleryPhotos();
     } catch (err) {
       console.error('Ошибка загрузки профиля:', err);
       error('Ошибка', 'Не удалось загрузить профиль');
@@ -352,51 +347,7 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  const loadGalleryPhotos = async () => {
-    try {
-      console.log('📸 Загружаю фото галереи с сервера...');
-      const response = await profileAPI.getGalleryPhotos();
-      
-      console.log('📦 Полный ответ сервера:', response);
-      console.log('   response.data:', response.data);
-      console.log('   response.data.success:', response.data?.success);
-      console.log('   response.data.photos тип:', typeof response.data?.photos);
-      console.log('   response.data.photos length:', Array.isArray(response.data?.photos) ? response.data.photos.length : 'не массив');
-      
-      if (response.data && response.data.success && Array.isArray(response.data.photos)) {
-        console.log(`✅ Загружено ${response.data.photos.length} фото из галереи`);
-        
-        // Логируем КАЖДОЕ фото для отладки
-        response.data.photos.forEach((photo, index) => {
-          console.log(`\n🖼️ Фото #${index}:`, {
-            id: photo.id,
-            hasPhotoField: !!photo.photo,
-            photoType: typeof photo.photo,
-            photoLength: photo.photo ? photo.photo.length : 0,
-            photoStart: photo.photo ? photo.photo.substring(0, 30) : 'N/A',
-            uploaded_at: photo.uploaded_at
-          });
-        });
-        
-        // ✅ Сохраняем в состояние
-        setGalleryPhotos(response.data.photos);
-        console.log('✅ Фото сохранены в состояние galleryPhotos');
-      } else {
-        console.warn('⚠️ Ответ не содержит photos или success=false');
-        console.warn('   response.data.success:', response.data?.success);
-        console.warn('   response.data.photos:', response.data?.photos);
-        setGalleryPhotos([]);
-      }
-    } catch (error) {
-      console.error('❌ Ошибка загрузки галереи:', error.message);
-      console.error('   Stack:', error.stack);
-      if (error.response) {
-        console.error('   Response status:', error.response.status);
-        console.error('   Response data:', error.response.data);
-      }
-      setGalleryPhotos([]);
-    }
-  };
+
 
   // 🎨 Функция для смены цвета карточки
   const handleChangeCardColor = async (newColor) => {
@@ -465,248 +416,65 @@ const ProfileScreen = ({ navigation }) => {
   const pickImage = async () => {
     try {
       setImageLoading(true);
-      console.log('📸 Начинаю выбор изображения для профиля...');
       
-      // Шаг 1: Запрашиваем разрешение
-      console.log('🔐 Проверяю разрешения галереи...');
+      // Запрашиваем разрешение
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log('📋 Результат запроса разрешения:', permission);
       
       if (!permission.granted) {
-        console.warn('❌ Разрешение не дано. Status:', permission.status);
         error('Ошибка', 'Нужно разрешение для доступа к галерее');
         return;
       }
       
-      console.log('✅ Разрешение получено');
-      
-      // Шаг 2: Открываем галерею
-      console.log('📱 Открываю галерею...');
+      // Открываем галерею
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.7,
+        quality: 0.8,
         base64: true,
       });
       
-      console.log('📦 Результат выбора:', { 
-        canceled: result.canceled, 
-        hasAssets: result.assets && result.assets.length > 0,
-        assetsLength: result.assets?.length
-      });
-      
-      // Проверяем что пользователь не отменил
       if (result.canceled) {
-        console.log('⏭️ Пользователь отменил выбор');
         return;
       }
       
-      // Проверяем что есть выбранные файлы
       if (!result.assets || result.assets.length === 0) {
-        console.error('❌ Нет выбранных файлов');
         error('Ошибка', 'Не удалось получить изображение');
         return;
       }
       
       const selectedAsset = result.assets[0];
-      console.log('🖼️ Выбранное изображение:', {
-        uri: selectedAsset.uri,
-        width: selectedAsset.width,
-        height: selectedAsset.height,
-        hasBase64: !!selectedAsset.base64
-      });
       
-      // Шаг 3: Обработка изображения - КРИТИЧНО проверяем base64
-      // ОШИБКА: Если используем URI вместо base64, это сломает весь процесс
       if (!selectedAsset.base64) {
-        console.error('❌ Base64 недоступен в ImagePicker!');
-        console.error('   URI доступен:', selectedAsset.uri);
-        console.error('   ImagePicker не вернул base64 хотя мы его запросили');
-        warning('Ошибка', 'Не удалось получить фото в нужном формате. Попробуйте другое фото.');
-        setImageLoading(false);
+        warning('Ошибка', 'Не удалось получить фото в нужном формате');
         return;
       }
       
-      const base64ToUpload = selectedAsset.base64;
-      console.log('✅ Base64 получен успешно!');
-      console.log('   Размер:', base64ToUpload.length, 'символов');
-      console.log('   Первые 30 символов:', base64ToUpload.substring(0, 30));
+      const base64Image = `data:image/jpeg;base64,${selectedAsset.base64}`;
       
-      // Шаг 4: Сохраняем фото на сервер
-      console.log('📤 Загружаю фото на сервер...');
-      console.log('   Отправляю ЧИСТЫЙ base64 БЕЗ префикса');
+      // ✅ ГЛАВНОЕ: Обновляем аватар в профиле
+      const updatedProfile = { ...profile, avatar: base64Image };
+      setProfile(updatedProfile);
       
-      try {
-        const uploadResponse = await profileAPI.uploadGalleryPhoto(base64ToUpload);
-        
-        if (uploadResponse.data && uploadResponse.data.success) {
-          console.log(`✅ Фото ${uploadResponse.data.photoId} загружено на сервер`);
-          console.log('📦 Ответ сервера:', JSON.stringify(uploadResponse.data, null, 2));
-          
-          // Добавляем фото в локальный массив
-          // ВАЖНО: Сохраняем ЧИСТЫЙ base64 (как в БД на сервере)
-          const newPhoto = {
-            id: uploadResponse.data.photoId,
-            photo: base64ToUpload,
-            uploaded_at: new Date().toISOString()
-          };
-          
-          console.log('🖼️ Добавляю фото в состояние galleryPhotos');
-          console.log('   ID:', newPhoto.id);
-          console.log('   Photo length:', newPhoto.photo.length);
-          
-          setGalleryPhotos(prev => [newPhoto, ...prev]);
-          success('Успех', 'Фото добавлено в галерею');
-        } else {
-          console.error('❌ Ошибка сервера при загрузке фото:', uploadResponse.data?.error);
-          error('Ошибка', uploadResponse.data?.error || 'Не удалось сохранить фото');
-        }
-      } catch (uploadError) {
-        console.error('❌ Ошибка загрузки фото на сервер:', uploadError.message);
-        console.error('   Full error:', uploadError);
-        error('Ошибка', 'Не удалось загрузить фото на сервер');
-      }
+      // Загружаем на сервер
+      await profileAPI.updateProfile({ avatar: base64Image });
+      
+      // Сохраняем локально
+      await AsyncStorage.setItem('user', JSON.stringify(updatedProfile));
+      
+      success('Успех', 'Аватар обновлен');
       
     } catch (error) {
-      console.error('❌ Ошибка при выборе изображения:', error);
-      console.error('   Message:', error.message);
-      console.error('   Stack:', error.stack);
-      error('Ошибка', `Не удалось выбрать изображение: ${error.message}`);
+      console.error('Ошибка при выборе изображения:', error);
+      error('Ошибка', 'Не удалось обновить аватар');
     } finally {
       setImageLoading(false);
     }
   };
 
-  const getPhotoUri = (photo) => {
-    // 🔍 ШАГ 1: Получаем данные фото из разных возможных источников
-    let photoData = null;
-    
-    if (!photo) {
-      console.warn('⚠️ getPhotoUri: photo = null/undefined');
-      return null;
-    }
-    
-    // Если это строка - может быть URI или base64
-    if (typeof photo === 'string') {
-      photoData = photo;
-      console.log('📝 photo это строка, length:', photo.length);
-    } 
-    // Если это объект - ищем поле с фото
-    else if (typeof photo === 'object' && photo !== null) {
-      console.log('📦 photo это объект, ключи:', Object.keys(photo));
-      
-      // Сначала ищем photo (это поле где хранится base64 с сервера)
-      if (photo.photo && typeof photo.photo === 'string') {
-        photoData = photo.photo;
-        console.log('✅ Найдено поле photo, length:', photo.photo.length);
-      }
-      // Потом ищем uri (это из ImagePicker)
-      else if (photo.uri && typeof photo.uri === 'string') {
-        photoData = photo.uri;
-        console.log('✅ Найдено поле uri:', photo.uri.substring(0, 50) + '...');
-      }
-      else {
-        console.error('❌ Объект photo не содержит photo или uri!');
-        console.error('   Доступные ключи:', Object.keys(photo));
-        return null;
-      }
-    } else {
-      console.error('❌ photo неизвестного типа:', typeof photo);
-      return null;
-    }
-    
-    if (!photoData) {
-      console.error('❌ photoData пуст!');
-      return null;
-    }
-    
-    // 🔍 ШАГ 2: Проверяем что это за формат данных
-    
-    // Если это уже полный data URI
-    if (photoData.startsWith('data:')) {
-      console.log('✅ Это уже data URI, возвращаем как есть');
-      return photoData;
-    }
-    
-    // Если это HTTP URL
-    if (photoData.startsWith('http://') || photoData.startsWith('https://')) {
-      console.log('✅ Это HTTP URL, возвращаем как есть');
-      return photoData;
-    }
-    
-    // Если это локальный путь (файл)
-    if (photoData.startsWith('file://') || photoData.startsWith('/')) {
-      console.log('✅ Это локальный файловый путь, возвращаем как есть');
-      return photoData;
-    }
-    
-    // 🔍 ШАГ 3: Это должен быть чистый base64 с сервера
-    // Определяем тип по сигнатуре base64
-    
-    console.log('🔄 Преобразую чистый base64 в data URI...');
-    console.log('   Первые 20 символов:', photoData.substring(0, 20));
-    
-    let mimeType = 'image/jpeg'; // По умолчанию JPEG
-    
-    // JPEG начинается с /9j/
-    if (photoData.startsWith('/9j/')) {
-      mimeType = 'image/jpeg';
-      console.log('📸 Определён JPEG');
-    }
-    // PNG начинается с iVBORw0KGgoAAAANSUhEUg
-    else if (photoData.startsWith('iVBORw0KGgoAAAA')) {
-      mimeType = 'image/png';
-      console.log('📸 Определён PNG');
-    }
-    // GIF начинается с R0lGODlh
-    else if (photoData.startsWith('R0lGODlh')) {
-      mimeType = 'image/gif';
-      console.log('📸 Определён GIF');
-    }
-    // BMP начинается с Qk0
-    else if (photoData.startsWith('Qk0')) {
-      mimeType = 'image/bmp';
-      console.log('📸 Определён BMP');
-    }
-    // WebP начинается с UklGR
-    else if (photoData.startsWith('UklGR')) {
-      mimeType = 'image/webp';
-      console.log('📸 Определён WebP');
-    }
-    else {
-      console.warn('⚠️ Тип не распознан по сигнатуре, использую JPEG');
-      console.log('   Первые 50 символов:', photoData.substring(0, 50));
-    }
-    
-    // Добавляем префикс
-    const result = `data:${mimeType};base64,${photoData}`;
-    console.log('✅ Результирующий URI (первые 100 чаров):', result.substring(0, 100) + '...');
-    
-    return result;
-  };
 
-  const deleteGalleryPhoto = async (photoId) => {
-    try {
-      console.log(`🗑️ Удаляю фото ${photoId}`);
-      
-      const deleteResponse = await profileAPI.deleteGalleryPhoto(photoId);
-      
-      if (deleteResponse.data && deleteResponse.data.success) {
-        console.log('✅ Фото удалено');
-        
-        // Удаляем из локального массива
-        setGalleryPhotos(prev => prev.filter(photo => photo.id !== photoId));
-        success('Успех', 'Фото удалено');
-      } else {
-        console.error('❌ Ошибка удаления:', deleteResponse.data?.error);
-        error('Ошибка', 'Не удалось удалить фото');
-      }
-    } catch (err) {
-      console.error('❌ Ошибка удаления фото:', err);
-      error('Ошибка', 'Не удалось удалить фото');
-    }
-  };
+
+
 
   const handleSave = async () => {
     if (!profile.username.trim()) {
@@ -1024,100 +792,7 @@ const ProfileScreen = ({ navigation }) => {
               </View>
             </View>
 
-            {/* Галерея фото профиля */}
-            <View style={[styles.card, styles.cardShadow, { backgroundColor: theme.surface }]}>
-              <Text style={[styles.cardTitle, { color: theme.text }]}>Фотографии</Text>
-              <Text style={[styles.cardSubtitle, { color: theme.textSecondary }]}>Ваши загруженные фото</Text>
-              <View style={styles.galleryGrid}>
-                <TouchableOpacity 
-                  style={[styles.galleryItem, styles.addPhotoButton, { borderColor: theme.primary }]}
-                  onPress={pickImage}
-                  disabled={imageLoading}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  {imageLoading ? (
-                    <>
-                      <ActivityIndicator size="small" color={theme.primary} />
-                      <Text style={[styles.addPhotoText, { color: theme.primary }]}>Загрузка...</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Ionicons name="image-outline" size={32} color={theme.primary} />
-                      <Text style={[styles.addPhotoText, { color: theme.primary }]}>Добавить фото</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                {/* Отображение фото галереи */}
-                {galleryPhotos.length > 0 ? (
-                  galleryPhotos.map((photo, photoIndex) => {
-                    console.log(`\n🎯 РЕНДЕР ФОТО #${photoIndex}`);
-                    console.log('   photo:', photo);
-                    
-                    const uri = getPhotoUri(photo);
-                    
-                    console.log('   Полученный URI:', uri ? uri.substring(0, 100) + '...' : 'NULL');
-                    
-                    if (!uri) {
-                      console.error(`❌ Фото #${photoIndex}: URI не получен!`);
-                    }
-                    
-                    return (
-                      <TouchableOpacity 
-                        key={photo.id || photoIndex}
-                        style={[styles.galleryItem, { backgroundColor: theme.surfaceLight }]}
-                        onLongPress={() => {
-                          Alert.alert(
-                            'Удалить фото?',
-                            'Это действие нельзя отменить',
-                            [
-                              { text: 'Отмена', onPress: () => {} },
-                              { 
-                                text: 'Удалить',
-                                onPress: () => deleteGalleryPhoto(photo.id),
-                                style: 'destructive'
-                              }
-                            ]
-                          );
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        {uri ? (
-                          <>
-                            <Image 
-                              source={{ uri: uri }} 
-                              style={StyleSheet.absoluteFill}
-                              resizeMode="cover"
-                              onError={(err) => {
-                                console.error(`❌ Image ошибка #${photoIndex}:`, err.nativeEvent.error);
-                              }}
-                              onLoad={() => {
-                                console.log(`✅ Image загружен #${photoIndex}`);
-                              }}
-                            />
-                            <Text style={styles.galleryDeleteHint}>Долгое нажатие для удаления</Text>
-                          </>
-                        ) : (
-                          <>
-                            <Ionicons name="alert-circle" size={24} color="#FF3B30" />
-                            <Text style={{ fontSize: 10, color: '#FF3B30', marginTop: 4 }}>Ошибка URI</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <>
-                    {/* Placeholder для пустой галереи */}
-                    {[1, 2, 3, 4, 5].map((item) => (
-                      <View key={item} style={[styles.galleryItem, { backgroundColor: theme.surfaceLight }]}>
-                        <Ionicons name="image" size={24} color={theme.textLight} />
-                      </View>
-                    ))}
-                  </>
-                )}
-              </View>
-            </View>
+
 
             <View style={[styles.card, styles.cardShadow, styles.actionsCard, { backgroundColor: theme.surface }]}> 
               {actionItems.map((action, index) => (
@@ -1861,49 +1536,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  // ГАЛЕРЕЯ ФОТО
-  galleryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 14,
-  },
-  galleryItem: {
-    width: '32%',
-    aspectRatio: 1,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-  },
-  addPhotoButton: {
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    backgroundColor: 'rgba(99, 102, 241, 0.05)',
-  },
-  addPhotoText: {
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  galleryDeleteHint: {
-    fontSize: 8,
-    fontWeight: '600',
-    color: '#ffffff',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingVertical: 3,
-    paddingHorizontal: 6,
-    borderRadius: 6,
-    textAlign: 'center',
-    position: 'absolute',
-    bottom: 6,
-  },
+
   // АВАТАР СТИЛИ
   avatarLarge: {
     width: 110,

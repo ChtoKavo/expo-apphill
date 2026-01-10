@@ -770,270 +770,241 @@ const ChatsListScreen = ({ navigation }) => {
     });
   }, [chats]);
 
-  const loadChats = async (mapArg) => {
+  // ⭐ НОВАЯ ФУНКЦИЯ: Загружает детали чатов в фоне с ограничением параллельных запросов
+  const loadChatsDetailsAsync = async (allFriends, mapArg) => {
     try {
-      setIsAppWorking(true); // ✅ Начало загрузки
-      const response = await friendAPI.getFriends();
-      const allFriends = response.data.filter(f => f.status === 'accepted');
+      const CONCURRENT_LIMIT = 3; // Максимум 3 одновременных запроса
       
-      // 🔍 DEBUG: Логируем статусы онлайна
-      console.log('🔍 Загруженные друзья (статусы онлайна):');
-      allFriends.forEach(f => {
-        const statusOnline = f.is_online || f.isOnline || f.online || false;
-        console.log(`  ${f.id} (${f.username}): is_online=${statusOnline} [is_online=${f.is_online}, isOnline=${f.isOnline}, online=${f.online}]`);
-      });
-      
-      const map = mapArg || pinnedMap || {};
-      
-      const mapped = await Promise.all(allFriends.map(async (friend) => {
-        const key = `personal-${friend.id}`;
-        const pinnedAt = map[key] || null;
+      for (let i = 0; i < allFriends.length; i += CONCURRENT_LIMIT) {
+        const batch = allFriends.slice(i, i + CONCURRENT_LIMIT);
         
-        // Загружаем последнее сообщение для этого друга
-        let lastMessage = friend.last_message || friend.lastMessage || null;
-        let lastMessageTime = friend.last_message_time || friend.lastMessageTime || null;
-        let unreadCount = 0;
-        let lastMessageReadStatus = false;
-        let lastMessageId = null;
-        let lastMessageSenderId = null;
-        
-        try {
-          const messagesResp = await messageAPI.getMessages(friend.id);
-          if (messagesResp.data && messagesResp.data.length > 0) {
-            // Берём последнее сообщение из массива
-            const lastMsg = messagesResp.data[messagesResp.data.length - 1];
-            
-            // 🔍 DEBUG: Логируем что пришло с API
-            console.log(`🔄 API /messages/${friend.id}: Получено ${messagesResp.data.length} сообщений`);
-            console.log(`   Последнее сообщение:`, {
-              id: lastMsg.id,
-              sender_id: lastMsg.sender_id,
-              receiver_id: lastMsg.receiver_id,
-              message: lastMsg.message?.substring(0, 20) + '...',
-              is_read: lastMsg.is_read,
-              created_at: lastMsg.created_at
-            });
-            
-            lastMessage = lastMsg.message || lastMsg.msg || '📎 Медиа';
-            lastMessageTime = lastMsg.created_at || lastMsg.createdAt;
-            lastMessageId = lastMsg.id;
-            lastMessageSenderId = lastMsg.sender_id;
-            
-            // Получаем время последнего открытия этого чата
-            let lastVisitTimeStr = await AsyncStorage.getItem(`chat_visit_${friend.id}`);
-            let lastVisitTime = 0;
-            
-            if (lastVisitTimeStr) {
-              lastVisitTime = new Date(lastVisitTimeStr).getTime();
-            } else {
-              // Если это первый визит - устанавливаем текущее время
-              // Это означает, что все старые сообщения будут считаться прочитанными
-              const now = new Date().toISOString();
-              await AsyncStorage.setItem(`chat_visit_${friend.id}`, now);
-              lastVisitTime = new Date(now).getTime();
-            }
-            
-            // Подсчитываем непрочитанные сообщения:
-            // - сообщения от друга (не от текущего пользователя)
-            // - полученные ПОСЛЕ последнего открытия чата
+        const detailedChats = await Promise.all(batch.map(async (friend) => {
+          try {
+            const messagesResp = await messageAPI.getMessages(friend.id);
             const currentUser = await AsyncStorage.getItem('user');
             const currentUserId = currentUser ? JSON.parse(currentUser).id : null;
             
-            if (currentUserId) {
-              unreadCount = messagesResp.data.filter(msg => {
-                const msgTime = new Date(msg.created_at || msg.createdAt).getTime();
-                return msg.sender_id === friend.id && 
-                       msg.receiver_id === currentUserId &&
-                       msgTime > lastVisitTime &&
-                       !msg.is_read; // ✅ Считаем только непрочитанные
-              }).length;
+            if (messagesResp.data && messagesResp.data.length > 0) {
+              const lastMsg = messagesResp.data[messagesResp.data.length - 1];
               
-              console.log(`📊 Чат ${friend.id}: всего сообщений=${messagesResp.data.length}, непрочитанных=${unreadCount}`);
+              // Получаем время последнего открытия чата
+              let lastVisitTimeStr = await AsyncStorage.getItem(`chat_visit_${friend.id}`);
+              let lastVisitTime = 0;
               
-              // Проверяем, прочитано ли последнее сообщение (для галочек)
-              // ✅ ВАЖНО: Для СВОИХ отправленных сообщений is_read всегда=1 с API, но это неправильно
-              // Исправляем на false, socket события обновят на true
-              if (lastMsg.sender_id === currentUserId) {
-                // Это наше сообщение - ИСПРАВЛЯЕМ на false (как в ChatScreen)
-                lastMessageReadStatus = false;
-                console.log(`✅ Чат ${friend.id}: Это наше сообщение (id=${lastMessageId}), is_read ИСПРАВЛЕН на false`);
+              if (lastVisitTimeStr) {
+                lastVisitTime = new Date(lastVisitTimeStr).getTime();
               } else {
-                // Это сообщение от друга - берём как есть с сервера
-                lastMessageReadStatus = lastMsg.is_read || false;
-                console.log(`⊘ Чат ${friend.id}: Сообщение от друга, is_read=${lastMessageReadStatus}`);
+                const now = new Date().toISOString();
+                await AsyncStorage.setItem(`chat_visit_${friend.id}`, now);
+                lastVisitTime = new Date(now).getTime();
+              }
+              
+              // Подсчитываем непрочитанные
+              let unreadCount = 0;
+              if (currentUserId) {
+                unreadCount = messagesResp.data.filter(msg => {
+                  const msgTime = new Date(msg.created_at || msg.createdAt).getTime();
+                  return msg.sender_id === friend.id && 
+                         msg.receiver_id === currentUserId &&
+                         msgTime > lastVisitTime &&
+                         !msg.is_read;
+                }).length;
+              }
+              
+              return {
+                id: friend.id,
+                lastMessage: lastMsg.message || '📎 Медиа',
+                lastMessageTime: lastMsg.created_at || lastMsg.createdAt,
+                lastMessageId: lastMsg.id,
+                lastMessageSenderId: lastMsg.sender_id,
+                lastMessageReadStatus: lastMsg.sender_id === currentUserId ? false : (lastMsg.is_read || false),
+                unreadCount: unreadCount,
+              };
+            }
+          } catch (err) {
+            // Игнорируем ошибки для отдельных чатов
+          }
+          return null;
+        }));
+        
+        // Обновляем чаты с детальной информацией
+        setChats(prev => {
+          const updated = [...prev];
+          detailedChats.forEach(detailed => {
+            if (detailed) {
+              const idx = updated.findIndex(c => c.id === detailed.id);
+              if (idx > -1) {
+                updated[idx] = {
+                  ...updated[idx],
+                  ...detailed
+                };
               }
             }
-          }
-        } catch (err) {
-          console.log(`Ошибка загрузки сообщений для ${friend.id}:`, err);
-          unreadCount = friend.unread_count || friend.unreadCount || 0;
-        }
+          });
+          return updated;
+        });
+        
+        // Даём браузеру время отдохнуть между батчами
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    } catch (err) {
+      // Ошибка фоновой загрузки не критична
+    }
+  };
+
+  const loadChats = async (mapArg) => {
+    try {
+      setIsAppWorking(true);
+      const response = await friendAPI.getFriends();
+      const allFriends = response.data.filter(f => f.status === 'accepted');
+      
+      const map = mapArg || pinnedMap || {};
+      
+      // ⭐ ИСПРАВЛЕНИЕ 1: Сразу показываем чаты БЕЗ полной истории сообщений
+      const mapped = allFriends.map((friend) => {
+        const lastMessage = friend.last_message || friend.lastMessage || '';
+        const lastMessageTime = friend.last_message_time || friend.lastMessageTime || new Date().toISOString();
+        const unreadCount = friend.unread_count || friend.unreadCount || 0;
+        const key = `personal-${friend.id}`;
+        const pinnedAt = map[key] || null;
         
         return {
           ...friend,
           type: 'personal',
-          lastMessage,
+          lastMessage: lastMessage || '📎 Медиа',
           lastMessageTime,
-          lastMessageReadStatus,
-          lastMessageId,
-          lastMessageSenderId,
-          unreadCount: unreadCount || friend.unread_count || friend.unreadCount || 0,
+          lastMessageReadStatus: false,
+          lastMessageId: null,
+          lastMessageSenderId: null,
+          unreadCount,
           pinned: !!pinnedAt,
           pinnedAt,
           is_online: friend.is_online || friend.isOnline || friend.online || false
         };
-      }));
-
-      setChats(mapped);
-      setIsAppWorking(false); // ✅ Загрузка завершена
-      
-      // 🔍 Debug: Логируем все чаты с информацией о галочках
-      console.log('🔄 ChatsListScreen: Загруженные чаты с is_read статусом:');
-      mapped.forEach(chat => {
-        const showCheckmark = chat.lastMessageReadStatus !== undefined && chat.lastMessageSenderId === currentUser?.id;
-        console.log(`  Чат ${chat.id} (${chat.username}): ` +
-          `lastMsg=${chat.lastMessageId}, ` +
-          `senderId=${chat.lastMessageSenderId}, ` +
-          `currentUserId=${currentUser?.id}, ` +
-          `is_read=${chat.lastMessageReadStatus}, ` +
-          `showCheckmark=${showCheckmark ? '✓✓' : '✗'}`);
       });
 
-      // Попробуем получить непрочитанные сообщения с сервера и заполнить бейджи
-      try {
-        const token = await AsyncStorage.getItem('token');
-        if (token) {
-          const resp = await fetch('http://151.247.196.66:3001/api/messages/unread', {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data && Array.isArray(data.messages)) {
-              const counts = {};
-              for (const m of data.messages) {
-                const sender = m.sender_id || m.senderId || m.sender;
-                if (!sender) continue;
-                counts[String(sender)] = (counts[String(sender)] || 0) + 1;
-              }
-
-              setChats(prev => prev.map(c => ({
-                ...c,
-                unreadCount: counts[String(c.id)] || c.unreadCount || 0
-              })));
-            }
-          }
-        }
-      } catch (err) {
-        console.log('Не удалось получить unread из /api/messages/unread', err);
-      }
+      setChats(mapped);
+      setIsAppWorking(false);
+      
+      // ⭐ ИСПРАВЛЕНИЕ 2: Загружаем детали в фоне (не блокируя UI)
+      loadChatsDetailsAsync(allFriends, map);
+      
     } catch (error) {
       console.error('Ошибка загрузки чатов:', error);
-      setIsAppWorking(false); // ✅ Завершить загрузку даже при ошибке
+      setIsAppWorking(false);
+    }
+  };
+
+  // ⭐ НОВАЯ ФУНКЦИЯ: Загружает детали групп в фоне с ограничением параллельных запросов
+  const loadGroupsDetailsAsync = async (allGroups) => {
+    try {
+      const CONCURRENT_LIMIT = 3;
+      
+      for (let i = 0; i < allGroups.length; i += CONCURRENT_LIMIT) {
+        const batch = allGroups.slice(i, i + CONCURRENT_LIMIT);
+        
+        const detailedGroups = await Promise.all(batch.map(async (group) => {
+          try {
+            const messagesResp = await groupAPI.getGroupMessages(group.id);
+            const currentUser = await AsyncStorage.getItem('user');
+            const currentUserId = currentUser ? JSON.parse(currentUser).id : null;
+            
+            if (messagesResp.data && messagesResp.data.length > 0) {
+              const lastMsg = messagesResp.data[messagesResp.data.length - 1];
+              
+              // Получаем время последнего открытия группы
+              let lastVisitTimeStr = await AsyncStorage.getItem(`group_visit_${group.id}`);
+              let lastVisitTime = 0;
+              
+              if (lastVisitTimeStr) {
+                lastVisitTime = new Date(lastVisitTimeStr).getTime();
+              } else {
+                const now = new Date().toISOString();
+                await AsyncStorage.setItem(`group_visit_${group.id}`, now);
+                lastVisitTime = new Date(now).getTime();
+              }
+              
+              // Подсчитываем непрочитанные
+              let unreadCount = 0;
+              if (currentUserId) {
+                unreadCount = messagesResp.data.filter(msg => {
+                  const msgTime = new Date(msg.created_at || msg.createdAt).getTime();
+                  return msg.sender_id !== currentUserId &&
+                         msgTime > lastVisitTime &&
+                         !msg.is_read;
+                }).length;
+              }
+              
+              return {
+                id: group.id,
+                lastMessage: lastMsg.message || '📎 Медиа',
+                lastMessageTime: lastMsg.created_at || lastMsg.createdAt,
+                lastMessageId: lastMsg.id,
+                lastMessageSenderId: lastMsg.sender_id,
+                lastMessageReadStatus: lastMsg.sender_id === currentUserId ? false : (lastMsg.is_read || false),
+                unreadCount: unreadCount,
+              };
+            }
+          } catch (err) {
+            // Игнорируем ошибки
+          }
+          return null;
+        }));
+        
+        setGroups(prev => {
+          const updated = [...prev];
+          detailedGroups.forEach(detailed => {
+            if (detailed) {
+              const idx = updated.findIndex(g => g.id === detailed.id);
+              if (idx > -1) {
+                updated[idx] = { ...updated[idx], ...detailed };
+              }
+            }
+          });
+          return updated;
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    } catch (err) {
+      // Ошибка фоновой загрузки
     }
   };
 
   const loadGroups = async (mapArg) => {
     try {
-      setIsAppWorking(true); // ✅ Начало загрузки
+      setIsAppWorking(true);
       const response = await groupAPI.getGroups();
       const map = mapArg || pinnedMap || {};
       
-      const mapped = await Promise.all(response.data.map(async (group) => {
+      // ⭐ Сразу отрисовываем группы БЕЗ полной истории
+      const mapped = response.data.map((group) => {
         const key = `group-${group.id}`;
         const pinnedAt = map[key] || null;
-        
-        // Загружаем последнее сообщение для этой группы
-        let lastMessage = group.last_message || group.lastMessage || null;
-        let lastMessageTime = group.last_message_time || group.lastMessageTime || null;
-        let unreadCount = 0;
-        let lastMessageReadStatus = false;
-        let lastMessageId = null;
-        let lastMessageSenderId = null;
-        
-        try {
-          const messagesResp = await groupAPI.getGroupMessages(group.id);
-          if (messagesResp.data && messagesResp.data.length > 0) {
-            // Берём последнее сообщение из массива
-            const lastMsg = messagesResp.data[messagesResp.data.length - 1];
-            lastMessage = lastMsg.message || lastMsg.msg || '📎 Медиа';
-            lastMessageTime = lastMsg.created_at || lastMsg.createdAt;
-            lastMessageId = lastMsg.id;
-            lastMessageSenderId = lastMsg.sender_id;
-            
-            // Получаем время последнего открытия этой группы
-            let lastVisitTimeStr = await AsyncStorage.getItem(`group_visit_${group.id}`);
-            let lastVisitTime = 0;
-            
-            if (lastVisitTimeStr) {
-              lastVisitTime = new Date(lastVisitTimeStr).getTime();
-            } else {
-              // Если это первый визит - устанавливаем текущее время
-              // Это означает, что все старые сообщения будут считаться прочитанными
-              const now = new Date().toISOString();
-              await AsyncStorage.setItem(`group_visit_${group.id}`, now);
-              lastVisitTime = new Date(now).getTime();
-            }
-            
-            // Подсчитываем непрочитанные сообщения:
-            // - все сообщения кроме собственных
-            // - полученные ПОСЛЕ последнего открытия группы
-            const currentUser = await AsyncStorage.getItem('user');
-            const currentUserId = currentUser ? JSON.parse(currentUser).id : null;
-            
-            if (currentUserId) {
-              unreadCount = messagesResp.data.filter(msg => {
-                const msgTime = new Date(msg.created_at || msg.createdAt).getTime();
-                return msg.sender_id !== currentUserId &&
-                       msgTime > lastVisitTime &&
-                       !msg.is_read; // ✅ Считаем только непрочитанные
-              }).length;
-              
-              console.log(`📊 Группа ${group.id}: всего сообщений=${messagesResp.data.length}, непрочитанных=${unreadCount}`);
-              
-              // Проверяем, прочитано ли последнее сообщение (для галочек)
-              // ✅ ВАЖНО: Для СВОИХ отправленных сообщений is_read всегда=1 с API, но это неправильно
-              // Исправляем на false, socket события обновят на true
-              const lastMsg = messagesResp.data[messagesResp.data.length - 1];
-              if (lastMsg.sender_id === currentUserId) {
-                // Это наше сообщение - ИСПРАВЛЯЕМ на false (как в ChatScreen)
-                lastMessageReadStatus = false;
-                console.log(`✅ Группа ${group.id}: Это наше сообщение (id=${lastMessageId}), is_read ИСПРАВЛЕН на false`);
-              } else {
-                // Это сообщение от другого пользователя - берём как есть
-                lastMessageReadStatus = lastMsg.is_read || false;
-                console.log(`⊘ Группа ${group.id}: Сообщение от другого пользователя, is_read=${lastMessageReadStatus}`);
-              }
-            }
-          }
-        } catch (err) {
-          console.log(`Ошибка загрузки сообщений группы ${group.id}:`, err);
-          unreadCount = group.unread_count || group.unreadCount || 0;
-        }
         
         return {
           ...group,
           type: 'group',
-          lastMessage,
-          lastMessageTime,
-          lastMessageReadStatus,
-          lastMessageId,
-          lastMessageSenderId,
-          unreadCount: unreadCount || group.unread_count || group.unreadCount || 0,
+          lastMessage: group.last_message || group.lastMessage || '',
+          lastMessageTime: group.last_message_time || group.lastMessageTime || new Date().toISOString(),
+          lastMessageReadStatus: false,
+          lastMessageId: null,
+          lastMessageSenderId: null,
+          unreadCount: group.unread_count || group.unreadCount || 0,
           pinned: !!pinnedAt,
           pinnedAt
         };
-      }));
-      
+      });
+
       setGroups(mapped);
-      setIsAppWorking(false); // ✅ Загрузка завершена
+      setIsAppWorking(false);
+      
+      // Загружаем детали в фоне
+      loadGroupsDetailsAsync(response.data);
+      
     } catch (error) {
       console.error('Ошибка загрузки групп:', error);
-      setIsAppWorking(false); // ✅ Завершить загрузку даже при ошибке
+      setIsAppWorking(false);
     }
   };
 

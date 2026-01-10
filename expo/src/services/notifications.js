@@ -12,13 +12,13 @@ let currentActiveChatType = null; // 'personal' или 'group'
 export const setActiveChatContext = (chatId, chatType = 'personal') => {
   currentActiveChatId = chatId;
   currentActiveChatType = chatType;
-  console.log(`📍 Активный чат установлен: chatId=${chatId}, type=${chatType}`);
+  if (__DEV__) console.log(`📍 Активный чат установлен: chatId=${chatId}, type=${chatType}`);
 };
 
 export const clearActiveChatContext = () => {
   currentActiveChatId = null;
   currentActiveChatType = null;
-  console.log('📍 Активный чат очищен');
+  if (__DEV__) console.log('📍 Активный чат очищен');
 };
 
 export const getActiveChatContext = () => ({
@@ -35,7 +35,7 @@ Notifications.setNotificationHandler({
       
       // ❌ ИСПРАВЛЕНИЕ 1: Не показывать push если это от самого себя
       if (data?.sender_id && parseInt(data.sender_id) === currentUser?.id) {
-        console.log('⚠️ Уведомление от самого себя - скрывается');
+        if (__DEV__) console.log('⚠️ Уведомление от самого себя - скрывается');
         return {
           shouldShowAlert: false,
           shouldPlaySound: false,
@@ -48,7 +48,7 @@ Notifications.setNotificationHandler({
                        (data?.group_id && currentActiveChatId === parseInt(data.group_id) && currentActiveChatType === 'group');
       
       if (isInChat) {
-        console.log('⚠️ Пользователь внутри чата - локальное уведомление не показывается');
+        if (__DEV__) console.log('⚠️ Пользователь внутри чата - локальное уведомление не показывается');
         return {
           shouldShowAlert: false,
           shouldPlaySound: false,
@@ -57,14 +57,14 @@ Notifications.setNotificationHandler({
       }
       
       // ✅ ИСПРАВЛЕНИЕ 3: Показывать push даже когда приложение в фоне/закрыто
-      console.log('✅ Показываем push-уведомление (приложение может быть в любом состоянии)');
+      if (__DEV__) console.log('✅ Показываем push-уведомление (приложение может быть в любом состоянии)');
       return {
         shouldShowAlert: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
       };
     } catch (error) {
-      console.error('❌ Ошибка в handleNotification:', error);
+      if (__DEV__) console.error('❌ Ошибка в handleNotification:', error);
       // При ошибке всегда показываем уведомление (безопасный режим)
       return {
         shouldShowAlert: true,
@@ -132,26 +132,26 @@ export async function registerForPushNotificationsAsync() {
     }
     
     if (finalStatus !== 'granted') {
-      console.log('Разрешение на уведомления не получено');
+      if (__DEV__) console.log('Разрешение на уведомления не получено');
       return null;
     }
     
     try {
-      console.log('Начинаем получение push токена...');
+      if (__DEV__) console.log('Начинаем получение push токена...');
       
       const tokenResult = await Notifications.getExpoPushTokenAsync({
         projectId: "a118b9eb-eeb3-4395-9f2a-31063bd47ece"
       });
       
-      console.log('Получен результат токена:', tokenResult);
+      if (__DEV__) console.log('Получен результат токена:', tokenResult);
       token = tokenResult.data;
       
       if (!token) {
-        console.log('Токен не был получен');
+        if (__DEV__) console.log('Токен не был получен');
         return null;
       }
 
-      console.log('✅ Получен push токен:', token);
+      if (__DEV__) console.log('✅ Получен push токен:', token);
       
       // Сохраняем токен локально
       await AsyncStorage.setItem('pushToken', token);

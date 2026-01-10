@@ -925,7 +925,6 @@ const PostsScreen = ({ navigation }) => {
         {/* Галерея изображений поста */}
         {item.images && item.images.length > 0 ? (
           <>
-            {console.log(`📸 Rendering ${item.images.length} images for post ${item.id}`)}
             <View style={styles.imagesGalleryContainer}>
               {/* Первое большое изображение */}
               <TouchableOpacity
@@ -1276,8 +1275,8 @@ const PostsScreen = ({ navigation }) => {
     <Animated.View style={[
       styles.header,
       {
-        backgroundColor: theme.surface,
-        borderBottomColor: theme.border,
+        backgroundColor: '#0F2A4D',
+        borderBottomColor: '#1E4976',
       }
     ]}>
       {/* Верхняя часть header с поиском и меню */}
@@ -3698,12 +3697,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'column',
     borderBottomWidth: 1,
-    elevation: 2,
+    elevation: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    paddingTop: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    paddingTop: 14,
+    paddingBottom: 12,
   },
   headerTitleContainer: {
     flexDirection: 'row',
@@ -3717,16 +3717,17 @@ const styles = StyleSheet.create({
   burgerButton: {
     width: 44,
     height: 44,
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 149, 0, 0.1)',
-    borderWidth: 0,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 1,
+    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 149, 0, 0.3)',
+    elevation: 3,
+    shadowColor: '#FF9500',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
   },
   
   searchSection: {
@@ -3737,18 +3738,18 @@ const styles = StyleSheet.create({
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 48,
     gap: 10,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 149, 0, 0.15)',
-    backgroundColor: '#0f1f35',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    borderColor: 'rgba(255, 149, 0, 0.25)',
+    backgroundColor: 'rgba(31, 58, 97, 0.6)',
+    elevation: 4,
+    shadowColor: '#FF9500',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
   },
   searchInput: {
     flex: 1,
