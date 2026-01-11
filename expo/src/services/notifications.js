@@ -33,9 +33,17 @@ Notifications.setNotificationHandler({
       const { data } = notification.request.content;
       const currentUser = JSON.parse(await AsyncStorage.getItem('user') || '{}');
       
+      console.log('\n' + '='.repeat(70));
+      console.log('🔔 PUSH-УВЕДОМЛЕНИЕ ПОЛУЧЕНО');
+      console.log(`   Тип: ${data?.type || 'unknown'}`);
+      console.log(`   От: ${data?.sender_id || data?.group_id}`);
+      console.log(`   Текущий юзер: ${currentUser?.id}`);
+      console.log(`   Активный чат: ${currentActiveChatId} (${currentActiveChatType})`);
+      console.log('='.repeat(70));
+      
       // ❌ ИСПРАВЛЕНИЕ 1: Не показывать push если это от самого себя
       if (data?.sender_id && parseInt(data.sender_id) === currentUser?.id) {
-        if (__DEV__) console.log('⚠️ Уведомление от самого себя - скрывается');
+        console.log('⚠️ Уведомление от самого себя - скрывается');
         return {
           shouldShowAlert: false,
           shouldPlaySound: false,
@@ -48,7 +56,7 @@ Notifications.setNotificationHandler({
                        (data?.group_id && currentActiveChatId === parseInt(data.group_id) && currentActiveChatType === 'group');
       
       if (isInChat) {
-        if (__DEV__) console.log('⚠️ Пользователь внутри чата - локальное уведомление не показывается');
+        console.log('⚠️ Пользователь внутри чата - локальное уведомление не показывается');
         return {
           shouldShowAlert: false,
           shouldPlaySound: false,
@@ -57,14 +65,15 @@ Notifications.setNotificationHandler({
       }
       
       // ✅ ИСПРАВЛЕНИЕ 3: Показывать push даже когда приложение в фоне/закрыто
-      if (__DEV__) console.log('✅ Показываем push-уведомление (приложение может быть в любом состоянии)');
+      console.log('✅ Показываем push-уведомление (приложение может быть в любом состоянии)');
       return {
         shouldShowAlert: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
       };
     } catch (error) {
-      if (__DEV__) console.error('❌ Ошибка в handleNotification:', error);
+      console.error('❌ Ошибка в handleNotification:', error);
+      console.error('   Stack:', error.stack);
       // При ошибке всегда показываем уведомление (безопасный режим)
       return {
         shouldShowAlert: true,
@@ -174,7 +183,12 @@ export async function registerForPushNotificationsAsync() {
         }
         
         const response = await userAPI.registerPushToken(tokenData);
-        console.log('✅ Push токен успешно зарегистрирован на сервере:', response.data);
+        console.log('\n' + '='.repeat(70));
+        console.log('✅ PUSH ТОКЕН ЗАРЕГИСТРИРОВАН');
+        console.log(`   Токен: ${token.slice(0, 40)}...`);
+        console.log(`   Устройство: ${tokenData.deviceType} (${tokenData.deviceName})`);
+        console.log(`   Ответ сервера:`, response.data);
+        console.log('='.repeat(70));
       } catch (error) {
         console.error('❌ Ошибка при регистрации push токена на сервере:', error.response?.data || error.message);
         // Не прерываем процесс, если ошибка - просто логируем
@@ -210,7 +224,11 @@ export async function resendPushTokenAfterLogin() {
     console.log('📤 Переотправляем push токен на сервер после входа:', tokenData);
     
     const response = await userAPI.registerPushToken(tokenData);
-    console.log('✅ Push токен успешно переотправлен на сервер:', response.data);
+    console.log('\n' + '='.repeat(70));
+    console.log('✅ PUSH ТОКЕН ПЕРЕОТПРАВЛЕН (после входа)');
+    console.log(`   Токен: ${pushToken.slice(0, 40)}...`);
+    console.log(`   Ответ сервера:`, response.data);
+    console.log('='.repeat(70));
   } catch (error) {
     console.error('❌ Ошибка при переотправке push токена:', error.response?.data || error.message);
   }

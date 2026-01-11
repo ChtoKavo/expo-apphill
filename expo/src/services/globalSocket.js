@@ -15,14 +15,65 @@ import { registerForPushNotificationsAsync } from '../services/notifications';
 
 let globalSocket = null;
 let isConnecting = false;
+let currentUserId = null;  // ⭐ НОВОЕ: Отслеживаем текущий user_id
+
+/**
+ * ⭐ НОВАЯ ФУНКЦИЯ: Пересоздать socket при смене аккаунта
+ */
+export const resetSocket = async () => {
+  if (__DEV__) console.log('🔄 resetSocket: Сброс глобального socket...');
+  
+  if (globalSocket) {
+    try {
+      // Отправляем офлайн статус для ТЕКУЩЕГО пользователя
+      if (currentUserId) {
+        globalSocket.emit('user_status', {
+          user_id: currentUserId,
+          is_online: false,
+          timestamp: new Date().toISOString()
+        });
+        if (__DEV__) console.log(`📤 Отправлен офлайн статус для user_id ${currentUserId}`);
+      }
+      
+      // Отключаем и удаляем socket
+      globalSocket.removeAllListeners();
+      globalSocket.disconnect();
+      if (__DEV__) console.log('✅ Socket отключен');
+    } catch (err) {
+      if (__DEV__) console.error('❌ Ошибка при сбросе socket:', err);
+    }
+  }
+  
+  globalSocket = null;
+  currentUserId = null;
+  isConnecting = false;
+  if (__DEV__) console.log('✅ resetSocket: Socket полностью сброшен');
+};
 
 /**
  * Получить или создать глобальный сокет
+ * ⭐ МОДИФИЦИРОВАНО: Проверяет смену user_id и пересоздает socket при необходимости
  */
-export const getOrCreateSocket = async () => {
+export const getOrCreateSocket = async (forceUserId = null) => {
+  // Получаем текущего пользователя
+  const currentUserData = await AsyncStorage.getItem('user');
+  const user = currentUserData ? JSON.parse(currentUserData) : null;
+  const userId = forceUserId || user?.id;
+  
+  if (!userId) {
+    if (__DEV__) console.error('❌ getOrCreateSocket: Нет user_id');
+    throw new Error('Нет данных пользователя');
+  }
+  
+  // ⭐ КРИТИЧНО: Если user_id изменился - пересоздаём socket!
+  if (globalSocket && currentUserId && String(currentUserId) !== String(userId)) {
+    if (__DEV__) console.log(`🔄 getOrCreateSocket: Смена аккаунта ${currentUserId} → ${userId}, пересоздаём socket`);
+    await resetSocket();
+  }
+  
   // Если сокет уже создан и подключен - вернуть его
   if (globalSocket && globalSocket.connected) {
-    if (__DEV__) console.log('↻ Используем существующий socket (уже подключен)');
+    if (__DEV__) console.log(`↻ Используем существующий socket для user_id ${userId}`);
     return globalSocket;
   }
 
@@ -49,33 +100,39 @@ export const getOrCreateSocket = async () => {
 
   try {
     isConnecting = true;
-    
-    const currentUserData = await AsyncStorage.getItem('user');
-    if (!currentUserData) {
-      throw new Error('Нет данных пользователя');
-    }
 
-    const currentUser = JSON.parse(currentUserData);
+    if (__DEV__) console.log(`🔌 Создаем новый socket для user_id ${userId}...`);
 
-    if (__DEV__) console.log('🔌 Создаем новый socket соединение...');
-
+    // ⭐ КРИТИЧНО: Передаём user_id в query для идентификации на сервере
     globalSocket = io('http://151.247.196.66:3001', {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      query: {
+        user_id: userId
+      },
       auth: {
-        user_id: currentUser.id
+        user_id: userId
       }
     });
+    
+    currentUserId = userId;
 
     // Событие подключения
     globalSocket.on('connect', async () => {
-      if (__DEV__) console.log('✅ ГЛАВНОЕ СОЕДИНЕНИЕ: Подключены к серверу');
+      if (__DEV__) console.log(`✅ ГЛАВНОЕ СОЕДИНЕНИЕ: Подключены к серверу для user_id ${currentUserId}`);
       isConnecting = false;
       
       // ⭐ Аутентифицируем сокет с user_id
-      globalSocket.emit('authenticate_socket', { user_id: currentUser.id });
+      globalSocket.emit('authenticate_socket', { user_id: currentUserId });
+      
+      // ⭐ Отправляем статус "в сети"
+      globalSocket.emit('user_status', {
+        user_id: currentUserId,
+        is_online: true,
+        timestamp: new Date().toISOString()
+      });
       
       // Сразу регистрируем push-токен
       try {
@@ -158,15 +215,25 @@ export const getOrCreateSocket = async () => {
 };
 
 /**
- * Отключить глобальный сокет
+ * ⭐ МОДИФИЦИРОВАНО: Отключить глобальный сокет с отправкой офлайн статуса
  */
-export const disconnectSocket = () => {
-  if (globalSocket) {
-    globalSocket.disconnect();
-    globalSocket = null;
-    isConnecting = false;
-    if (__DEV__) console.log('🔌 Socket отключен');
+export const disconnectSocket = async () => {
+  if (__DEV__) console.log(`🔌 disconnectSocket: Отключение при выходе (user_id: ${currentUserId})...`);
+  
+  if (globalSocket && currentUserId) {
+    try {
+      globalSocket.emit('user_status', {
+        user_id: currentUserId,
+        is_online: false,
+        timestamp: new Date().toISOString()
+      });
+      if (__DEV__) console.log(`📤 Отправлен офлайн статус для user_id ${currentUserId}`);
+    } catch (err) {
+      if (__DEV__) console.error('❌ Ошибка отправки офлайн статуса:', err);
+    }
   }
+  
+  await resetSocket();
 };
 
 export default getOrCreateSocket;

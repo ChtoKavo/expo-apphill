@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI } from '../services/api';
 import { useModalAlert } from '../contexts/ModalAlertContext';
+import { resetSocket } from '../services/globalSocket';
 
 // Анимированный инпут компонент с иконкой
 const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, editable, icon }) => {
@@ -164,6 +165,14 @@ const RegisterScreen = ({ navigation }) => {
     setLoading(true);
     
     try {
+      // ⭐ КРИТИЧНО: Сбрасываем старый socket перед регистрацией нового пользователя
+      try {
+        await resetSocket();
+        console.log('✅ Старый socket сброшен перед регистрацией');
+      } catch (err) {
+        console.error('⚠️ Ошибка при сбросе socket:', err);
+      }
+      
       // ОТПРАВЛЯЕМ ЗАПРОС РЕГИСТРАЦИИ БЕЗ ВЕРИФИКАЦИИ
       const response = await authAPI.register({ 
         username, 

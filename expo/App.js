@@ -24,12 +24,14 @@ import NotificationSettings from './src/components/NotificationSettings';
 import UserProfileScreen from './src/screens/UserProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import useNotifications from './src/hooks/useNotifications';
+import useNotificationsWithReply, { setNavigationRef } from './src/hooks/useNotificationsWithReply';
 import useAppState from './src/hooks/useAppState';
 import { initializeGlobalNotifications } from './src/services/globalNotifications';
 import { initializeOnlineStatus, disconnectOnlineStatus } from './src/services/onlineStatus';
 import { registerBackgroundFetch, unregisterBackgroundFetch } from './src/services/backgroundTasks';
 import { ThemeProvider } from './src/contexts/ThemeContext';
 import { ModalAlertProvider } from './src/contexts/ModalAlertContext';
+import ReplyToNotificationModal from './src/components/ReplyToNotificationModal';
 
 const Stack = createStackNavigator();
 
@@ -40,6 +42,19 @@ export default function App() {
   
   // Инициализация уведомлений и статуса
   useNotifications();
+  
+  // 🆕 Инициализация уведомлений с функцией ответа
+  const {
+    replyModalVisible,
+    setReplyModalVisible,
+    replyData,
+    replyMessage,
+    setReplyMessage,
+    isSending,
+    handleSendReply,
+    handleNotificationPress
+  } = useNotificationsWithReply();
+  
   useAppState();
   
   // 🆕 Обработка клика по уведомлению для открытия чата
@@ -154,7 +169,13 @@ export default function App() {
       <ModalAlertProvider>
         {/* Скрываем статусбар приложения */}
         <StatusBar hidden />
-        <NavigationContainer ref={navigationRef}>
+        <NavigationContainer 
+          ref={(ref) => {
+            navigationRef.current = ref;
+            // 🆕 Передаем navigationRef в хук для push-уведомлений
+            setNavigationRef(ref);
+          }}
+        >
           <Stack.Navigator 
             initialRouteName={initialRoute} 
             screenOptions={{ headerShown: false }}
@@ -185,6 +206,21 @@ export default function App() {
             />
           </Stack.Navigator>
         </NavigationContainer>
+        
+        {/* 🆕 Модальное окно для ответа на сообщение из уведомления */}
+        <ReplyToNotificationModal
+          visible={replyModalVisible}
+          onClose={() => {
+            setReplyModalVisible(false);
+            setReplyMessage('');
+          }}
+          replyData={replyData}
+          replyMessage={replyMessage}
+          setReplyMessage={setReplyMessage}
+          onSendReply={handleSendReply}
+          onOpenChat={handleNotificationPress}
+          isSending={isSending}
+        />
       </ModalAlertProvider>
     </ThemeProvider>
   );

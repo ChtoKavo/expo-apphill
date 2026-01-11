@@ -191,6 +191,8 @@ export const messageAPI = {
   deleteChat: (userId) => api.post(`/messages/delete-chat/${userId}`),
   // Отметить одно сообщение как прочитанное
   markMessageAsRead: (messageId) => api.post(`/messages/${messageId}/read`),
+  // 📤 Переслать сообщение
+  forwardMessage: (forwardData) => api.post('/messages/forward', forwardData),
 };
 
 export const profileAPI = {

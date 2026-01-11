@@ -204,6 +204,7 @@ const ChatScreen = ({ route, navigation }) => {
   const flatListRef = useRef(null);
   const insets = useSafeAreaInsets();
   const newMessageInputRef = useRef(null); // 🆕 Ref для TextInput сообщения
+  const isInitialScrollDone = useRef(false); // 🆕 Флаг для мгновенного скролла при первом открытии
   
   // ⚡ ПАГИНАЦИЯ СООБЩЕНИЙ: Загружаем только последние 50 сообщений
   const [messagesPage, setMessagesPage] = useState(1);
@@ -234,6 +235,9 @@ const ChatScreen = ({ route, navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [chatBackground, setChatBackground] = useState('default');
+  const [backgroundModalVisible, setBackgroundModalVisible] = useState(false);
+  const [customBackgroundImage, setCustomBackgroundImage] = useState(null);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
   const voiceRecordingIntervalRef = useRef(null);
   const isProcessingVoiceRef = useRef(false);
   const callTimerRef = useRef(null);
@@ -264,6 +268,28 @@ const ChatScreen = ({ route, navigation }) => {
   
   // 🎥 ОШИБКИ ЗАГРУЗКИ ВИДЕО
   const [videoLoadErrors, setVideoLoadErrors] = useState({});
+  
+  // 📤 ПЕРЕСЫЛКА СООБЩЕНИЙ
+  const [forwardModalVisible, setForwardModalVisible] = useState(false);
+  const [messageToForward, setMessageToForward] = useState(null);
+  const [forwardRecipients, setForwardRecipients] = useState([]);
+  const [forwardSearchQuery, setForwardSearchQuery] = useState('');
+  const [forwardLoading, setForwardLoading] = useState(false);
+  
+  // 🖼️ МЕДИА В ПРОФИЛЕ
+  const [mediaTab, setMediaTab] = useState('photos'); // 'photos', 'videos', 'links', 'voice'
+  const [profileMediaLoading, setProfileMediaLoading] = useState(false);
+  const [profileMedia, setProfileMedia] = useState({
+    photos: [],
+    videos: [],
+    links: [],
+    voice: []
+  });
+  
+  // 🎬 ПРОСМОТР ВИДЕО
+  const [videoPlayerVisible, setVideoPlayerVisible] = useState(false);
+  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [videoDurations, setVideoDurations] = useState({}); // Хранит длительность видео по ID
 
   useEffect(() => {
     if (!isGroup && typeof user?.is_online === 'boolean') {
@@ -317,9 +343,128 @@ const ChatScreen = ({ route, navigation }) => {
         }
       });
       const data = await response.json();
-      setChatBackground(data.chat_background || 'default');
+      const bg = data.chat_background || 'default';
+      setChatBackground(bg);
+      
+      // Если фон кастомный - загружаем изображение
+      if (bg === 'custom') {
+        await loadCustomBackground();
+      }
     } catch (err) {
       setChatBackground('default');
+    }
+  };
+
+  // Функция для загрузки кастомного изображения
+  const loadCustomBackground = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const response = await fetch('http://151.247.196.66:3001/api/user/chat-background/image', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        if (data.image.startsWith('data:')) {
+          setCustomBackgroundImage(data.image);
+        } else {
+          setCustomBackgroundImage(`data:image/jpeg;base64,${data.image}`);
+        }
+      }
+    } catch (err) {
+      console.log('Кастомный фон не найден или ошибка загрузки');
+    }
+  };
+
+  // Выбор предустановленного фона
+  const selectBackground = async (backgroundType) => {
+    setBackgroundLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await fetch('http://151.247.196.66:3001/api/user/preferences', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ chat_background: backgroundType })
+      });
+      
+      setChatBackground(backgroundType);
+      setCustomBackgroundImage(null);
+      setBackgroundModalVisible(false);
+    } catch (err) {
+      error('Ошибка', 'Не удалось сменить фон');
+    } finally {
+      setBackgroundLoading(false);
+    }
+  };
+
+  // Выбор кастомного изображения из галереи
+  const pickCustomBackground = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      warning('Ошибка', 'Нужно разрешение для доступа к галерее');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [9, 16],
+      quality: 0.7,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      setBackgroundLoading(true);
+      try {
+        const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        const token = await AsyncStorage.getItem('token');
+        
+        const response = await fetch('http://151.247.196.66:3001/api/user/chat-background/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ image: base64Image })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setChatBackground('custom');
+          setCustomBackgroundImage(base64Image);
+          setBackgroundModalVisible(false);
+        } else {
+          error('Ошибка', data.error || 'Не удалось загрузить изображение');
+        }
+      } catch (err) {
+        error('Ошибка', 'Не удалось загрузить изображение');
+      } finally {
+        setBackgroundLoading(false);
+      }
+    }
+  };
+
+  // Сброс фона на стандартный
+  const resetBackground = async () => {
+    setBackgroundLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await fetch('http://151.247.196.66:3001/api/user/chat-background', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setChatBackground('default');
+      setCustomBackgroundImage(null);
+      setBackgroundModalVisible(false);
+    } catch (err) {
+      error('Ошибка', 'Не удалось сбросить фон');
+    } finally {
+      setBackgroundLoading(false);
     }
   };
 
@@ -735,14 +880,22 @@ const ChatScreen = ({ route, navigation }) => {
           const { getOrCreateSocket } = require('../services/globalSocket');
           const socketInstance = await getOrCreateSocket();
           if (socketInstance && socketInstance.connected) {
+            console.log('\n' + '='.repeat(70));
+            console.log('📍 ОТПРАВЛЯЕМ SET_ACTIVE_CHAT');
+            console.log(`   Chat ID: ${user.id}`);
+            console.log(`   Chat Type: ${isGroup ? 'group' : 'personal'}`);
+            console.log('='.repeat(70));
+            
             socketInstance.emit('set_active_chat', {
               chat_id: user.id,
               chat_type: isGroup ? 'group' : 'personal',
               timestamp: new Date().toISOString()
             });
           } else {
+            console.log('⚠️ Socket не подключен, set_active_chat не отправлен');
           }
         } catch (err) {
+          console.error('❌ Ошибка при отправке set_active_chat:', err);
         }
       })();
     });
@@ -758,11 +911,19 @@ const ChatScreen = ({ route, navigation }) => {
           const { getOrCreateSocket } = require('../services/globalSocket');
           const socketInstance = await getOrCreateSocket();
           if (socketInstance && socketInstance.connected) {
+            console.log('\n' + '='.repeat(70));
+            console.log('📍 ОТПРАВЛЯЕМ CLEAR_ACTIVE_CHAT');
+            console.log('   Пользователь вышел из чата');
+            console.log('='.repeat(70));
+            
             socketInstance.emit('clear_active_chat', {
               timestamp: new Date().toISOString()
             });
+          } else {
+            console.log('⚠️ Socket не подключен, clear_active_chat не отправлен');
           }
         } catch (err) {
+          console.error('❌ Ошибка при отправке clear_active_chat:', err);
         }
       })();
     });
@@ -1425,17 +1586,9 @@ const ChatScreen = ({ route, navigation }) => {
       // Сбрасываем статус печатания при выходе из чата
       setIsUserTyping(false);
       if (socketConnection) {
-        // Отправляем статус офлайн перед отключением
-        if (currentUser?.id) {
-          try {
-            socketConnection.emit('user_status', { 
-              user_id: currentUser.id, 
-              is_online: false,
-              timestamp: new Date().toISOString()
-            });
-          } catch (err) {
-          }
-        }
+        // ❌ УДАЛЕНО: Не отправляем user_status false при выходе из чата
+        // Пользователь всё ещё онлайн (просто вернулся в ChatsListScreen)
+        // Реальный офлайн определяется через disconnect события socket
         
         if (isGroup) {
           socketConnection.emit('leave_group', user.id);
@@ -1469,6 +1622,11 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   const getBackgroundColor = () => {
+    // Если кастомный фон - возвращаем прозрачный (изображение будет под чатом)
+    if (chatBackground === 'custom' && customBackgroundImage) {
+      return 'transparent';
+    }
+    
     const backgrounds = {
       'default': theme.background,
       'light-blue': '#E3F2FD',
@@ -1522,9 +1680,9 @@ const ChatScreen = ({ route, navigation }) => {
     };
   };
 
-  const scrollToBottom = React.useCallback(() => {
+  const scrollToBottom = React.useCallback((animated = true) => {
     if (flatListRef.current) {
-      flatListRef.current.scrollToEnd({ animated: true });
+      flatListRef.current.scrollToEnd({ animated });
     }
   }, []);
 
@@ -1561,7 +1719,12 @@ const ChatScreen = ({ route, navigation }) => {
           const cached = await AsyncStorage.getItem(cacheKey);
           if (cached) {
             const cachedMessages = JSON.parse(cached);
-            const groupedMessages = groupMessagesByDate(cachedMessages);
+            // ⭐ ИСПРАВЛЕНИЕ: Нормализуем URL в кэшированных сообщениях
+            const normalizedCachedMessages = cachedMessages.map(msg => ({
+              ...msg,
+              media_url: normalizeMediaUrl(msg.media_url)
+            }));
+            const groupedMessages = groupMessagesByDate(normalizedCachedMessages);
             setMessages(groupedMessages);
             // Скролим вниз для кэшированных сообщений
             setTimeout(() => scrollToBottom(), 100);
@@ -2711,6 +2874,132 @@ const ChatScreen = ({ route, navigation }) => {
     );
   };
 
+  // 📤 ПЕРЕСЫЛКА СООБЩЕНИЙ: Загрузка получателей
+  const loadForwardRecipients = async () => {
+    try {
+      setForwardLoading(true);
+      const recipients = [];
+      
+      // Загружаем друзей
+      try {
+        const friendsResponse = await friendAPI.getFriends();
+        if (friendsResponse.data && Array.isArray(friendsResponse.data)) {
+          friendsResponse.data.forEach(friend => {
+            recipients.push({
+              id: friend.id,
+              name: friend.username,
+              avatar: friend.avatar,
+              type: 'user'
+            });
+          });
+        }
+      } catch (err) {
+        console.log('Ошибка загрузки друзей:', err);
+      }
+      
+      // Загружаем группы пользователя
+      try {
+        const groupsResponse = await groupAPI.getGroups();
+        if (groupsResponse.data && Array.isArray(groupsResponse.data)) {
+          groupsResponse.data.forEach(group => {
+            recipients.push({
+              id: group.id,
+              name: group.name,
+              avatar: group.avatar,
+              type: 'group'
+            });
+          });
+        }
+      } catch (err) {
+        console.log('Ошибка загрузки групп:', err);
+      }
+      
+      setForwardRecipients(recipients);
+    } catch (err) {
+      console.error('Ошибка загрузки получателей:', err);
+      error('Ошибка', 'Не удалось загрузить список получателей');
+    } finally {
+      setForwardLoading(false);
+    }
+  };
+
+  // 📤 ПЕРЕСЫЛКА СООБЩЕНИЙ: Отправка
+  const forwardMessage = async (recipient) => {
+    if (!messageToForward) return;
+    
+    // ⚡ ОПТИМИЗАЦИЯ: Закрываем модалку сразу для мгновенного отклика
+    const msgToForward = { ...messageToForward };
+    setForwardModalVisible(false);
+    setMessageToForward(null);
+    setForwardSearchQuery('');
+    
+    try {
+      const response = await messageAPI.forwardMessage({
+        message_id: msgToForward.id,
+        receiver_id: recipient.id,
+        receiver_type: recipient.type
+      });
+      
+      if (!response.data?.success) {
+        error('Ошибка', response.data?.error || 'Не удалось переслать сообщение');
+      }
+    } catch (err) {
+      console.error('Ошибка пересылки:', err);
+      error('Ошибка', 'Не удалось переслать сообщение');
+    }
+  };
+
+  // 📤 ПЕРЕСЫЛКА: Загружаем получателей при открытии модалки
+  useEffect(() => {
+    if (forwardModalVisible) {
+      loadForwardRecipients();
+    }
+  }, [forwardModalVisible]);
+
+  // 🖼️ МЕДИА В ПРОФИЛЕ: Загрузка медиа из сообщений
+  const loadProfileMedia = useCallback(async () => {
+    setProfileMediaLoading(true);
+    try {
+      // Загружаем все сообщения для извлечения медиа (личные или групповые)
+      const response = isGroup
+        ? await groupAPI.getGroupMessages(user.id, { page: 1, limit: 500 })
+        : await messageAPI.getMessages(user.id, { page: 1, limit: 500 });
+      const allMessages = Array.isArray(response.data) ? response.data : [];
+      
+      // Фильтруем по типам
+      const photos = allMessages.filter(msg => msg.media_type === 'image' && msg.media_url);
+      const videos = allMessages.filter(msg => msg.media_type === 'video' && msg.media_url);
+      const voice = allMessages.filter(msg => msg.media_type === 'voice' && msg.media_url);
+      
+      // Извлекаем ссылки из текстовых сообщений
+      const urlRegex = /(https?:\/\/[^\s]+)/gi;
+      const links = allMessages
+        .filter(msg => msg.message && urlRegex.test(msg.message))
+        .map(msg => {
+          const urls = msg.message.match(urlRegex);
+          return { ...msg, url: urls ? urls[0] : msg.message };
+        });
+      
+      setProfileMedia({
+        photos: photos.map(p => ({ ...p, media_url: normalizeMediaUrl(p.media_url) })),
+        videos: videos.map(v => ({ ...v, media_url: normalizeMediaUrl(v.media_url) })),
+        links,
+        voice: voice.map(v => ({ ...v, media_url: normalizeMediaUrl(v.media_url) }))
+      });
+    } catch (err) {
+      console.log('Ошибка загрузки медиа профиля:', err);
+    } finally {
+      setProfileMediaLoading(false);
+    }
+  }, [user.id, isGroup]);
+
+  // 🖼️ МЕДИА: Загружаем при открытии профиля (личные и групповые чаты)
+  useEffect(() => {
+    if (showProfileModal) {
+      loadProfileMedia();
+    }
+  }, [showProfileModal, loadProfileMedia]);
+
   const editMessage = async (messageId, newText) => {
     try {
       if (!newText.trim()) {
@@ -2867,6 +3156,14 @@ const ChatScreen = ({ route, navigation }) => {
             >
               Вы
             </Text>
+          )}
+          {item.forwarded_from_user && (
+            <View style={[styles.forwardedHeader, { borderBottomColor: isSent ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }]}>
+              <Ionicons name="arrow-redo" size={12} color={isSent ? 'rgba(255,255,255,0.7)' : '#667eea'} style={{ transform: [{ scaleX: -1 }] }} />
+              <Text style={[styles.forwardedFromText, { color: isSent ? 'rgba(255,255,255,0.7)' : '#667eea' }]}>
+                Переслано от {item.forwarded_from_user}
+              </Text>
+            </View>
           )}
           {item.reply_to && (
             <View style={[styles.replyContainer, { backgroundColor: isSent ? 'rgba(255,255,255,0.1)' : theme.background }]}>
@@ -3070,6 +3367,18 @@ const ChatScreen = ({ route, navigation }) => {
                 >
                   <Ionicons name="return-up-forward" size={18} color={theme.primary} />
                   <Text style={[styles.contextMenuItemText, { color: theme.text }]}>Ответить</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.contextMenuItem}
+                  onPress={() => {
+                    setMessageToForward(item);
+                    setForwardModalVisible(true);
+                    setContextMenu(false);
+                  }}
+                >
+                  <Ionicons name="arrow-redo" size={18} color={theme.primary} />
+                  <Text style={[styles.contextMenuItemText, { color: theme.text }]}>Переслать</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -3461,7 +3770,18 @@ const ChatScreen = ({ route, navigation }) => {
         keyboardVerticalOffset={0}
       >
         <SafeAreaView edges={['left', 'right', 'bottom']} style={[styles.container, { flex: 1, backgroundColor: theme.background }]}>
-          <View style={[styles.chatContainer, { flex: 1, backgroundColor: getBackgroundColor() }]}>
+          <View style={[styles.chatContainer, { flex: 1 }]}>
+            {/* Кастомный фон */}
+            {chatBackground === 'custom' && customBackgroundImage && (
+              <Image 
+                source={{ uri: customBackgroundImage }}
+                style={styles.chatBackgroundImage}
+                resizeMode="cover"
+              />
+            )}
+            
+            {/* Основной контент чата */}
+            <View style={[styles.chatContentOverlay, { backgroundColor: chatBackground === 'custom' ? 'transparent' : getBackgroundColor() }]}>
           {/* Панель закреплённых сообщений */}
           <PinnedMessagesBar 
             pinnedMessages={messages.filter(m => pinnedMessages.includes(m.id))}
@@ -3536,8 +3856,21 @@ const ChatScreen = ({ route, navigation }) => {
               styles.messagesContainer, 
               { paddingBottom: getContentContainerPadding() }
             ]}
-            onContentSizeChange={() => scrollToBottom()}
-            onLayout={() => scrollToBottom()}
+            onContentSizeChange={() => {
+              // ⚡ При первом открытии скроллим мгновенно (без анимации)
+              // Используем setTimeout чтобы FlatList успел отрендерить все элементы
+              if (!isInitialScrollDone.current && messages.length > 0) {
+                isInitialScrollDone.current = true;
+                setTimeout(() => scrollToBottom(false), 50);
+              }
+            }}
+            onLayout={() => {
+              // ⚡ При первом layout тоже скроллим мгновенно
+              if (!isInitialScrollDone.current && messages.length > 0) {
+                isInitialScrollDone.current = true;
+                setTimeout(() => scrollToBottom(false), 50);
+              }
+            }}
             onViewableItemsChanged={handleViewableItemsChanged}
             viewabilityConfig={{
               itemVisiblePercentThreshold: 50,
@@ -3562,7 +3895,7 @@ const ChatScreen = ({ route, navigation }) => {
           
           {/* Контейнер для поля ввода */}
           <View 
-            style={[styles.inputContainer, { backgroundColor: theme.background }]}
+            style={styles.inputContainer}
           >
             {isRecordingVoice && (
               <View style={[styles.voiceRecordingPanel, { backgroundColor: theme.primary + '10', borderBottomColor: theme.primary + '30' }]}>
@@ -3695,6 +4028,7 @@ const ChatScreen = ({ route, navigation }) => {
             </View>
           </View>
           </View>
+          </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
 
@@ -3713,6 +4047,17 @@ const ChatScreen = ({ route, navigation }) => {
             <View style={[styles.chatMenu, { backgroundColor: theme.surface }]}>
               {!isGroup && (
                 <>
+                  <TouchableOpacity 
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setChatMenuVisible(false);
+                      setBackgroundModalVisible(true);
+                    }}
+                  >
+                    <Ionicons name="image-outline" size={20} color={theme.text} />
+                    <Text style={[styles.menuItemText, { color: theme.text }]}>Сменить фон</Text>
+                  </TouchableOpacity>
+
                   <TouchableOpacity 
                     style={styles.menuItem}
                     onPress={() => {
@@ -3910,7 +4255,7 @@ const ChatScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
               )}
               keyExtractor={(item) => item.id.toString()}
-              ListEmptyState={
+              ListEmptyComponent={
                 searchQuery.length > 0 ? (
                   <View style={[styles.emptySearchState, { backgroundColor: theme.background }]}>
                     <Ionicons name="search" size={48} color={theme.textSecondary} />
@@ -3950,7 +4295,11 @@ const ChatScreen = ({ route, navigation }) => {
               <View style={{ width: 24 }} />
             </View>
             
-            <View style={[styles.profileContent, { backgroundColor: theme.background }]}>
+            <ScrollView 
+              style={[styles.profileContent, { backgroundColor: theme.background }]}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 30 }}
+            >
               {/* Avatar Section */}
               <View style={[styles.profileHeader, { backgroundColor: theme.surface }]}>
                 <TouchableOpacity 
@@ -4194,7 +4543,7 @@ const ChatScreen = ({ route, navigation }) => {
                         />
                       )}
                     </View>
-
+                    
                     <View style={styles.infoItem}>
                       <View style={[styles.infoIcon, { backgroundColor: theme.primary + '15' }]}>
                         <Ionicons name="shield-checkmark" size={20} color={theme.primary} />
@@ -4208,7 +4557,232 @@ const ChatScreen = ({ route, navigation }) => {
                   </>
                 )}
               </View>
-            </View>
+                  
+              {/* 🖼️ РАЗДЕЛ МЕДИА */}
+              <View style={[styles.profileMediaSection, { backgroundColor: theme.surface }]}>
+                  {/* Вкладки */}
+                  <View style={[styles.mediaTabsContainer, { borderBottomColor: theme.border }]}>
+                    <TouchableOpacity 
+                      style={[styles.mediaTab, mediaTab === 'photos' && styles.mediaTabActive, mediaTab === 'photos' && { borderBottomColor: theme.primary }]}
+                      onPress={() => setMediaTab('photos')}
+                    >
+                      <Ionicons name={mediaTab === 'photos' ? "images" : "images-outline"} size={22} color={mediaTab === 'photos' ? theme.primary : theme.textSecondary} />
+                      <Text style={[styles.mediaTabText, { color: mediaTab === 'photos' ? theme.primary : theme.textSecondary }]}>
+                        Фото
+                      </Text>
+                      {profileMedia.photos.length > 0 && (
+                        <View style={[styles.mediaTabBadge, { backgroundColor: theme.primary }]}>
+                          <Text style={styles.mediaTabBadgeText}>{profileMedia.photos.length}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.mediaTab, mediaTab === 'videos' && styles.mediaTabActive, mediaTab === 'videos' && { borderBottomColor: theme.primary }]}
+                      onPress={() => setMediaTab('videos')}
+                    >
+                      <Ionicons name={mediaTab === 'videos' ? "videocam" : "videocam-outline"} size={22} color={mediaTab === 'videos' ? theme.primary : theme.textSecondary} />
+                      <Text style={[styles.mediaTabText, { color: mediaTab === 'videos' ? theme.primary : theme.textSecondary }]}>
+                        Видео
+                      </Text>
+                      {profileMedia.videos.length > 0 && (
+                        <View style={[styles.mediaTabBadge, { backgroundColor: theme.primary }]}>
+                          <Text style={styles.mediaTabBadgeText}>{profileMedia.videos.length}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.mediaTab, mediaTab === 'links' && styles.mediaTabActive, mediaTab === 'links' && { borderBottomColor: theme.primary }]}
+                      onPress={() => setMediaTab('links')}
+                    >
+                      <Ionicons name={mediaTab === 'links' ? "link" : "link-outline"} size={22} color={mediaTab === 'links' ? theme.primary : theme.textSecondary} />
+                      <Text style={[styles.mediaTabText, { color: mediaTab === 'links' ? theme.primary : theme.textSecondary }]}>
+                        Ссылки
+                      </Text>
+                      {profileMedia.links.length > 0 && (
+                        <View style={[styles.mediaTabBadge, { backgroundColor: theme.primary }]}>
+                          <Text style={styles.mediaTabBadgeText}>{profileMedia.links.length}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                      style={[styles.mediaTab, mediaTab === 'voice' && styles.mediaTabActive, mediaTab === 'voice' && { borderBottomColor: theme.primary }]}
+                      onPress={() => setMediaTab('voice')}
+                    >
+                      <Ionicons name={mediaTab === 'voice' ? "mic" : "mic-outline"} size={22} color={mediaTab === 'voice' ? theme.primary : theme.textSecondary} />
+                      <Text style={[styles.mediaTabText, { color: mediaTab === 'voice' ? theme.primary : theme.textSecondary }]}>
+                        ГС
+                      </Text>
+                      {profileMedia.voice.length > 0 && (
+                        <View style={[styles.mediaTabBadge, { backgroundColor: theme.primary }]}>
+                          <Text style={styles.mediaTabBadgeText}>{profileMedia.voice.length}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  
+                  {/* Контент вкладки */}
+                  <View style={styles.mediaContent}>
+                      {profileMediaLoading ? (
+                        <View style={styles.mediaLoadingContainer}>
+                          <ActivityIndicator size="large" color={theme.primary} />
+                          <Text style={[styles.mediaLoadingText, { color: theme.textSecondary }]}>Загрузка...</Text>
+                        </View>
+                      ) : (
+                        <>
+                          {/* Фото */}
+                          {mediaTab === 'photos' && (
+                            profileMedia.photos.length > 0 ? (
+                              <View style={styles.mediaGrid}>
+                                {profileMedia.photos.map((item, index) => (
+                                  <TouchableOpacity 
+                                    key={`photo-${item.id || index}`}
+                                    style={styles.mediaGridItem}
+                                    onPress={() => {
+                                      setSelectedPhotoUri(item.media_url);
+                                      setFullscreenPhotoVisible(true);
+                                    }}
+                                  >
+                                    <Image source={{ uri: item.media_url }} style={styles.mediaGridImage} />
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                            ) : (
+                              <View style={styles.mediaEmptyContainer}>
+                                <Ionicons name="images-outline" size={48} color={theme.textSecondary} />
+                                <Text style={[styles.mediaEmptyText, { color: theme.textSecondary }]}>Нет фото</Text>
+                              </View>
+                            )
+                          )}
+                          
+                          {/* Видео */}
+                          {mediaTab === 'videos' && (
+                            profileMedia.videos.length > 0 ? (
+                              <View style={styles.mediaGrid}>
+                                {profileMedia.videos.map((item, index) => (
+                                  <TouchableOpacity 
+                                    key={`video-${item.id || index}`}
+                                    style={styles.mediaGridItem}
+                                    onPress={() => {
+                                      setSelectedVideo(item);
+                                      setVideoPlayerVisible(true);
+                                    }}
+                                  >
+                                    {/* Видео превью с обложкой */}
+                                    <Video
+                                      source={{ uri: item.media_url }}
+                                      style={styles.mediaGridImage}
+                                      resizeMode="cover"
+                                      shouldPlay={false}
+                                      isMuted={true}
+                                      positionMillis={1000}
+                                      onLoad={(status) => {
+                                        if (status.durationMillis) {
+                                          setVideoDurations(prev => ({
+                                            ...prev,
+                                            [item.id]: status.durationMillis
+                                          }));
+                                        }
+                                      }}
+                                    />
+                                    {/* Иконка play поверх */}
+                                    <View style={styles.videoPlayOverlay}>
+                                      <Ionicons name="play-circle" size={36} color="rgba(255,255,255,0.9)" />
+                                    </View>
+                                    {/* Длительность видео */}
+                                    {videoDurations[item.id] && (
+                                      <View style={styles.videoDurationBadge}>
+                                        <Text style={styles.videoDurationText}>
+                                          {Math.floor(videoDurations[item.id] / 60000)}:{String(Math.floor((videoDurations[item.id] % 60000) / 1000)).padStart(2, '0')}
+                                        </Text>
+                                      </View>
+                                    )}
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                            ) : (
+                              <View style={styles.mediaEmptyContainer}>
+                                <Ionicons name="videocam-outline" size={48} color={theme.textSecondary} />
+                                <Text style={[styles.mediaEmptyText, { color: theme.textSecondary }]}>Нет видео</Text>
+                              </View>
+                            )
+                          )}
+                          
+                          {/* Ссылки */}
+                          {mediaTab === 'links' && (
+                            profileMedia.links.length > 0 ? (
+                              <ScrollView style={styles.mediaListScroll}>
+                                {profileMedia.links.map((item, index) => (
+                                  <TouchableOpacity 
+                                    key={`link-${item.id || index}`}
+                                    style={[styles.mediaLinkItem, { borderBottomColor: theme.border }]}
+                                    onPress={() => {
+                                      // Открыть ссылку
+                                    }}
+                                  >
+                                    <View style={[styles.mediaLinkIcon, { backgroundColor: theme.primary + '15' }]}>
+                                      <Ionicons name="link" size={20} color={theme.primary} />
+                                    </View>
+                                    <View style={styles.mediaLinkContent}>
+                                      <Text style={[styles.mediaLinkText, { color: theme.primary }]} numberOfLines={1}>
+                                        {item.url || item.message}
+                                      </Text>
+                                      <Text style={[styles.mediaLinkDate, { color: theme.textSecondary }]}>
+                                        {new Date(item.created_at).toLocaleDateString('ru-RU')}
+                                      </Text>
+                                    </View>
+                                    <Ionicons name="open-outline" size={18} color={theme.textSecondary} />
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            ) : (
+                              <View style={styles.mediaEmptyContainer}>
+                                <Ionicons name="link-outline" size={48} color={theme.textSecondary} />
+                                <Text style={[styles.mediaEmptyText, { color: theme.textSecondary }]}>Нет ссылок</Text>
+                              </View>
+                            )
+                          )}
+                          
+                          {/* Голосовые сообщения */}
+                          {mediaTab === 'voice' && (
+                            profileMedia.voice.length > 0 ? (
+                              <ScrollView style={styles.mediaListScroll}>
+                                {profileMedia.voice.map((item, index) => (
+                                  <View 
+                                    key={`voice-${item.id || index}`}
+                                    style={[styles.mediaVoiceItem, { borderBottomColor: theme.border }]}
+                                  >
+                                    <View style={[styles.mediaVoiceIcon, { backgroundColor: theme.primary + '15' }]}>
+                                      <Ionicons name="mic" size={20} color={theme.primary} />
+                                    </View>
+                                    <View style={styles.mediaVoiceContent}>
+                                      <Text style={[styles.mediaVoiceDuration, { color: theme.text }]}>
+                                        Голосовое сообщение
+                                      </Text>
+                                      <Text style={[styles.mediaVoiceDate, { color: theme.textSecondary }]}>
+                                        {new Date(item.created_at).toLocaleDateString('ru-RU')}
+                                      </Text>
+                                    </View>
+                                    <TouchableOpacity style={[styles.mediaVoicePlay, { backgroundColor: theme.primary }]}>
+                                      <Ionicons name="play" size={16} color="#fff" />
+                                    </TouchableOpacity>
+                                  </View>
+                                ))}
+                              </ScrollView>
+                            ) : (
+                              <View style={styles.mediaEmptyContainer}>
+                                <Ionicons name="mic-outline" size={48} color={theme.textSecondary} />
+                                <Text style={[styles.mediaEmptyText, { color: theme.textSecondary }]}>Нет голосовых</Text>
+                              </View>
+                            )
+                          )}
+                        </>
+                      )}
+                  </View>
+                </View>
+            </ScrollView>
           </SafeAreaView>
         </Modal>
 
@@ -4601,11 +5175,379 @@ const ChatScreen = ({ route, navigation }) => {
             </View>
           </TouchableOpacity>
         </Modal>
+
+        {/* 📤 МОДАЛЬНОЕ ОКНО ПЕРЕСЫЛКИ СООБЩЕНИЯ */}
+        <Modal
+          visible={forwardModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => {
+            setForwardModalVisible(false);
+            setMessageToForward(null);
+            setForwardSearchQuery('');
+          }}
+        >
+          <View style={styles.forwardModalOverlay}>
+            <View style={[styles.forwardModalContent, { backgroundColor: theme.surface }]}>
+              {/* Заголовок */}
+              <View style={[styles.forwardModalHeader, { borderBottomColor: theme.border }]}>
+                <Text style={[styles.forwardModalTitle, { color: theme.text }]}>Переслать сообщение</Text>
+                <TouchableOpacity onPress={() => {
+                  setForwardModalVisible(false);
+                  setMessageToForward(null);
+                  setForwardSearchQuery('');
+                }}>
+                  <Ionicons name="close" size={24} color={theme.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              
+              {/* Поиск */}
+              <View style={[styles.forwardSearchContainer, { backgroundColor: theme.background }]}>
+                <Ionicons name="search" size={20} color={theme.textSecondary} />
+                <TextInput
+                  style={[styles.forwardSearchInput, { color: theme.text }]}
+                  placeholder="Поиск..."
+                  value={forwardSearchQuery}
+                  onChangeText={setForwardSearchQuery}
+                  placeholderTextColor={theme.textSecondary}
+                />
+              </View>
+              
+              {/* Превью пересылаемого сообщения */}
+              {messageToForward && (
+                <View style={[styles.forwardPreview, { backgroundColor: isDark ? 'rgba(102,126,234,0.1)' : '#f0f8ff' }]}>
+                  <Text style={[styles.forwardPreviewLabel, { color: theme.textSecondary }]}>Пересылаемое сообщение:</Text>
+                  <Text style={[styles.forwardPreviewText, { color: theme.text }]} numberOfLines={2}>
+                    {messageToForward.message || '[Медиа]'}
+                  </Text>
+                </View>
+              )}
+              
+              {/* Список получателей */}
+              {forwardLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={theme.primary} />
+                  <Text style={{ color: theme.textSecondary, marginTop: 12 }}>Загрузка...</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={forwardRecipients.filter(r => 
+                    r.name.toLowerCase().includes(forwardSearchQuery.toLowerCase())
+                  )}
+                  keyExtractor={(item) => `${item.type}_${item.id}`}
+                  renderItem={({ item: recipient }) => (
+                    <TouchableOpacity
+                      style={[styles.forwardRecipientItem, { borderBottomColor: theme.border }]}
+                      onPress={() => forwardMessage(recipient)}
+                    >
+                      {recipient.avatar ? (
+                        <Image
+                          source={{ uri: normalizeMediaUrl(recipient.avatar) }}
+                          style={styles.forwardRecipientAvatar}
+                        />
+                      ) : (
+                        <View style={[styles.forwardRecipientAvatar, { backgroundColor: theme.primary + '30', justifyContent: 'center', alignItems: 'center' }]}>
+                          <Text style={{ color: theme.primary, fontSize: 20, fontWeight: '600' }}>
+                            {recipient.name?.charAt(0)?.toUpperCase() || '?'}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.forwardRecipientInfo}>
+                        <Text style={[styles.forwardRecipientName, { color: theme.text }]}>{recipient.name}</Text>
+                        <Text style={[styles.forwardRecipientType, { color: theme.textSecondary }]}>
+                          {recipient.type === 'group' ? 'Группа' : 'Личный чат'}
+                        </Text>
+                      </View>
+                      <Ionicons name="send" size={20} color={theme.primary} />
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={[styles.forwardEmptyText, { color: theme.textSecondary }]}>
+                      {forwardSearchQuery ? 'Ничего не найдено' : 'Нет доступных получателей'}
+                    </Text>
+                  }
+                />
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* 🎬 МОДАЛЬНОЕ ОКНО ПРОСМОТРА ВИДЕО */}
+        <Modal
+          visible={videoPlayerVisible}
+          animationType="fade"
+          transparent={true}
+          onRequestClose={() => {
+            setVideoPlayerVisible(false);
+            setSelectedVideo(null);
+          }}
+        >
+          <View style={styles.videoPlayerOverlay}>
+            {/* Кнопка закрытия */}
+            <TouchableOpacity 
+              style={styles.videoPlayerCloseBtn}
+              onPress={() => {
+                setVideoPlayerVisible(false);
+                setSelectedVideo(null);
+              }}
+            >
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+            
+            {/* Видео плеер */}
+            {selectedVideo && (
+              <Video
+                source={{ uri: selectedVideo.media_url }}
+                style={styles.fullscreenVideo}
+                useNativeControls={true}
+                resizeMode="contain"
+                shouldPlay={true}
+                isLooping={false}
+                onError={(error) => {
+                  console.error('Ошибка воспроизведения видео:', error);
+                  Alert.alert('Ошибка', 'Не удалось воспроизвести видео');
+                }}
+              />
+            )}
+            
+            {/* Информация о видео */}
+            {selectedVideo && (
+              <View style={styles.videoInfoBar}>
+                <Text style={styles.videoInfoDate}>
+                  {selectedVideo.created_at 
+                    ? new Date(selectedVideo.created_at).toLocaleDateString('ru-RU', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric'
+                      })
+                    : ''
+                  }
+                </Text>
+                {videoDurations[selectedVideo.id] && (
+                  <Text style={styles.videoInfoDuration}>
+                    {Math.floor(videoDurations[selectedVideo.id] / 60000)}:{String(Math.floor((videoDurations[selectedVideo.id] % 60000) / 1000)).padStart(2, '0')}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        </Modal>
+
+        {/* 🎨 МОДАЛЬНОЕ ОКНО ВЫБОРА ФОНА */}
+        <Modal
+          visible={backgroundModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setBackgroundModalVisible(false)}
+        >
+          <View style={styles.backgroundModalOverlay}>
+            <View style={[styles.backgroundModalContent, { backgroundColor: theme.surface }]}>
+              {/* Заголовок */}
+              <View style={[styles.backgroundModalHeader, { borderBottomColor: theme.border }]}>
+                <Text style={[styles.backgroundModalTitle, { color: theme.text }]}>Выбрать фон чата</Text>
+                <TouchableOpacity onPress={() => setBackgroundModalVisible(false)}>
+                  <Ionicons name="close" size={24} color={theme.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              
+              {/* Индикатор загрузки */}
+              {backgroundLoading && (
+                <View style={[styles.backgroundLoadingOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)' }]}>
+                  <ActivityIndicator size="large" color={theme.primary} />
+                  <Text style={{ color: theme.text, marginTop: 12 }}>Загрузка...</Text>
+                </View>
+              )}
+              
+              <ScrollView style={styles.backgroundModalScroll} showsVerticalScrollIndicator={false}>
+                {/* Кнопка загрузки своего фото */}
+                <TouchableOpacity 
+                  style={[styles.customBackgroundButton, { borderColor: theme.primary }]}
+                  onPress={pickCustomBackground}
+                  disabled={backgroundLoading}
+                >
+                  <View style={[styles.customBackgroundIcon, { backgroundColor: theme.primary + '20' }]}>
+                    <Ionicons name="camera" size={28} color={theme.primary} />
+                  </View>
+                  <View style={styles.customBackgroundInfo}>
+                    <Text style={[styles.customBackgroundTitle, { color: theme.text }]}>Загрузить своё фото</Text>
+                    <Text style={[styles.customBackgroundSubtitle, { color: theme.textSecondary }]}>
+                      Выберите изображение из галереи
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+                
+                {/* Предустановленные фоны */}
+                <Text style={[styles.backgroundSectionTitle, { color: theme.textSecondary }]}>
+                  Предустановленные фоны
+                </Text>
+                
+                <View style={styles.backgroundGrid}>
+                  {/* Default */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: theme.background, borderColor: chatBackground === 'default' ? theme.primary : theme.border }
+                    ]}
+                    onPress={() => selectBackground('default')}
+                  >
+                    <Text style={[styles.backgroundOptionLabel, { color: theme.text }]}>По умолчанию</Text>
+                    {chatBackground === 'default' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Light Blue */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#E3F2FD', borderColor: chatBackground === 'light-blue' ? theme.primary : '#E3F2FD' }
+                    ]}
+                    onPress={() => selectBackground('light-blue')}
+                  >
+                    <Text style={styles.backgroundOptionLabel}>Голубой</Text>
+                    {chatBackground === 'light-blue' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Light Green */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#E8F5E9', borderColor: chatBackground === 'light-green' ? theme.primary : '#E8F5E9' }
+                    ]}
+                    onPress={() => selectBackground('light-green')}
+                  >
+                    <Text style={styles.backgroundOptionLabel}>Зелёный</Text>
+                    {chatBackground === 'light-green' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Light Pink */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#FCE4EC', borderColor: chatBackground === 'light-pink' ? theme.primary : '#FCE4EC' }
+                    ]}
+                    onPress={() => selectBackground('light-pink')}
+                  >
+                    <Text style={styles.backgroundOptionLabel}>Розовый</Text>
+                    {chatBackground === 'light-pink' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Light Purple */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#F3E5F5', borderColor: chatBackground === 'light-purple' ? theme.primary : '#F3E5F5' }
+                    ]}
+                    onPress={() => selectBackground('light-purple')}
+                  >
+                    <Text style={styles.backgroundOptionLabel}>Фиолетовый</Text>
+                    {chatBackground === 'light-purple' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Light Orange */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#FFF3E0', borderColor: chatBackground === 'light-orange' ? theme.primary : '#FFF3E0' }
+                    ]}
+                    onPress={() => selectBackground('light-orange')}
+                  >
+                    <Text style={styles.backgroundOptionLabel}>Оранжевый</Text>
+                    {chatBackground === 'light-orange' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: theme.primary }]}>
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Dark Blue */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#1E3A8A', borderColor: chatBackground === 'dark-blue' ? theme.primary : '#1E3A8A' }
+                    ]}
+                    onPress={() => selectBackground('dark-blue')}
+                  >
+                    <Text style={[styles.backgroundOptionLabel, { color: '#fff' }]}>Тёмно-синий</Text>
+                    {chatBackground === 'dark-blue' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: '#fff' }]}>
+                        <Ionicons name="checkmark" size={14} color={theme.primary} />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  
+                  {/* Dark Green */}
+                  <TouchableOpacity 
+                    style={[
+                      styles.backgroundOption, 
+                      { backgroundColor: '#1B4332', borderColor: chatBackground === 'dark-green' ? theme.primary : '#1B4332' }
+                    ]}
+                    onPress={() => selectBackground('dark-green')}
+                  >
+                    <Text style={[styles.backgroundOptionLabel, { color: '#fff' }]}>Тёмно-зелёный</Text>
+                    {chatBackground === 'dark-green' && (
+                      <View style={[styles.backgroundCheckmark, { backgroundColor: '#fff' }]}>
+                        <Ionicons name="checkmark" size={14} color={theme.primary} />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Кнопка сброса */}
+                {chatBackground !== 'default' && (
+                  <TouchableOpacity 
+                    style={[styles.resetBackgroundButton, { borderColor: '#EF4444' }]}
+                    onPress={resetBackground}
+                    disabled={backgroundLoading}
+                  >
+                    <Ionicons name="refresh" size={20} color="#EF4444" />
+                    <Text style={[styles.resetBackgroundText, { color: '#EF4444' }]}>
+                      Сбросить на стандартный
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                
+                {/* Превью текущего кастомного фона */}
+                {chatBackground === 'custom' && customBackgroundImage && (
+                  <View style={styles.currentCustomPreview}>
+                    <Text style={[styles.backgroundSectionTitle, { color: theme.textSecondary }]}>
+                      Текущий кастомный фон
+                    </Text>
+                    <Image 
+                      source={{ uri: customBackgroundImage }}
+                      style={styles.customPreviewImage}
+                      resizeMode="cover"
+                    />
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
     </GestureHandlerRootView>
   );
 };
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   dateSeparatorContainer: {
@@ -6190,6 +7132,478 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: 'monospace',
     color: '#999',
+  },
+  
+  // 📤 ПЕРЕСЫЛКА СООБЩЕНИЙ
+  forwardedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+  },
+  forwardedFromText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginLeft: 4,
+  },
+  forwardModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  forwardModalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  forwardModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  forwardModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  forwardSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  forwardSearchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    fontSize: 16,
+  },
+  forwardPreview: {
+    margin: 12,
+    marginTop: 0,
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#667eea',
+  },
+  forwardPreviewLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  forwardPreviewText: {
+    fontSize: 14,
+  },
+  forwardRecipientItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  forwardRecipientAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#ddd',
+  },
+  forwardRecipientInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  forwardRecipientName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  forwardRecipientType: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  forwardEmptyText: {
+    textAlign: 'center',
+    padding: 40,
+    fontSize: 16,
+  },
+  forwardSendingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  // 🖼️ МЕДИА В ПРОФИЛЕ
+  profileMediaSection: {
+    marginTop: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  mediaTabsContainer: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+  },
+  mediaTab: {
+    flex: 1,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    position: 'relative',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -1,
+  },
+  mediaTabActive: {
+    borderBottomWidth: 2,
+  },
+  mediaTabText: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 3,
+  },
+  mediaTabBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+  mediaTabBadgeText: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: '700',
+  },
+  mediaContent: {
+    minHeight: 160,
+    padding: 6,
+  },
+  mediaLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 50,
+  },
+  mediaLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+  },
+  mediaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  mediaGridItem: {
+    width: (width - 56) / 3,
+    aspectRatio: 1,
+    margin: 1.5,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  mediaGridImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaGridVideo: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaEmptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  mediaEmptyText: {
+    marginTop: 12,
+    fontSize: 14,
+  },
+  mediaListScroll: {
+    maxHeight: 300,
+  },
+  mediaLinkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+  },
+  mediaLinkIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaLinkContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  mediaLinkText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  mediaLinkDate: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  mediaVoiceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+  },
+  mediaVoiceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaVoiceContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  mediaVoiceDuration: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  mediaVoiceDate: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  mediaVoicePlay: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  // 🎬 ВИДЕО ПЛЕЕР
+  videoPlayOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  videoDurationBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoDurationText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  videoPlayerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayerCloseBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenVideo: {
+    width: width,
+    height: height * 0.8,
+  },
+  videoInfoBar: {
+    position: 'absolute',
+    bottom: 60,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  videoInfoDate: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 14,
+    marginRight: 16,
+  },
+  videoInfoDuration: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  
+  // 🎨 ФОН ЧАТА
+  chatBackgroundImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  chatContentOverlay: {
+    flex: 1,
+  },
+  
+  // Модальное окно выбора фона
+  backgroundModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  backgroundModalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    paddingBottom: 30,
+  },
+  backgroundModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  backgroundModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  backgroundModalScroll: {
+    padding: 16,
+  },
+  backgroundLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  
+  // Кнопка загрузки своего фото
+  customBackgroundButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    marginBottom: 20,
+  },
+  customBackgroundIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customBackgroundInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  customBackgroundTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  customBackgroundSubtitle: {
+    fontSize: 13,
+  },
+  
+  // Секция с предустановленными фонами
+  backgroundSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  backgroundGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -6,
+  },
+  backgroundOption: {
+    width: '46%',
+    aspectRatio: 1.3,
+    margin: '2%',
+    borderRadius: 16,
+    borderWidth: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  backgroundOptionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+  },
+  backgroundCheckmark: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  // Кнопка сброса
+  resetBackgroundButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginTop: 20,
+    gap: 8,
+  },
+  resetBackgroundText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  
+  // Превью текущего кастомного фона
+  currentCustomPreview: {
+    marginTop: 20,
+  },
+  customPreviewImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 16,
   },
 });
 

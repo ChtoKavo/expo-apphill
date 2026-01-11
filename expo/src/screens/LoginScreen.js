@@ -20,6 +20,7 @@ import { authAPI } from '../services/api';
 import { useModalAlert } from '../contexts/ModalAlertContext';
 import BannedAccountModal from '../components/BannedAccountModal';
 import { resendPushTokenAfterLogin } from '../services/notifications';
+import { resetSocket } from '../services/globalSocket';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -246,6 +247,14 @@ const LoginScreen = ({ navigation }) => {
 
   const handleGoogleLogin = async (accessToken) => {
     try {
+      // ⭐ КРИТИЧНО: Сбрасываем старый socket перед входом нового пользователя
+      try {
+        await resetSocket();
+        console.log('✅ Старый socket сброшен перед входом через Google');
+      } catch (err) {
+        console.error('⚠️ Ошибка при сбросе socket:', err);
+      }
+      
       const userInfoResponse = await fetch(
         "https://www.googleapis.com/userinfo/v2/me",
         {
@@ -303,6 +312,15 @@ const LoginScreen = ({ navigation }) => {
     
     try {
       setIsLoading(true);
+      
+      // ⭐ КРИТИЧНО: Сбрасываем старый socket перед входом нового пользователя
+      try {
+        await resetSocket();
+        console.log('✅ Старый socket сброшен перед входом');
+      } catch (err) {
+        console.error('⚠️ Ошибка при сбросе socket:', err);
+      }
+      
       const response = await authAPI.login({ email, password });
       
       // ✅ НОВОЕ: Проверяем, не забанен ли пользователь

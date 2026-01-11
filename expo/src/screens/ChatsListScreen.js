@@ -14,8 +14,11 @@ import {
   Platform,
   Modal,
   Animated,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { messageAPI, groupAPI, friendAPI, pinnedChatsAPI, profileAPI } from '../services/api';
 import { subscribeToNewMessages } from '../services/globalNotifications';
 import { getOrCreateSocket } from '../services/globalSocket';
@@ -49,11 +52,33 @@ const ChatsListScreen = ({ navigation }) => {
   const [searchActive, setSearchActive] = useState(false); // ✅ Состояние активного поиска
   const [fabOpen, setFabOpen] = useState(false); // ✅ Состояние FAB меню
   const [fabVisible, setFabVisible] = useState(true); // ✅ Видимость FAB при скролле
+  
+  // 🎨 ФОН СТРАНИЦЫ
+  const [chatsListBackground, setChatsListBackground] = useState('default');
+  const [chatsListBackgroundImage, setChatsListBackgroundImage] = useState(null);
+  const [backgroundModalVisible, setBackgroundModalVisible] = useState(false);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
+  
   const fabAnim = useRef(new Animated.Value(0)).current; // ✅ Анимация FAB
   const fabOpacityAnim = useRef(new Animated.Value(1)).current; // ✅ Анимация прозрачности FAB
   const lastScrollY = useRef(0); // ✅ Отслеживаем позицию скролла
   const socketConnectionRef = useRef(null); // ✅ Сохраняем socket в ref для использования в других местах
   const currentUserRef = useRef(null); // ✅ Ref для актуального currentUser в socket обработчиках
+
+  // ⭐ Очищаем чаты и группы когда currentUser меняется
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    console.log(`\n♻️ СМЕНА ПОЛЬЗОВАТЕЛЯ! Новый user_id: ${currentUser.id}`);
+    
+    // Очищаем все чаты и группы чтобы избежать отображения старых статусов
+    setChats([]);
+    setGroups([]);
+    setTypingUsers({});
+    setGroupTypingUsers({});
+    
+    console.log('🧹 Все чаты и группы очищены\n');
+  }, [currentUser?.id]);
 
   // ✅ Обновляем ref когда currentUser меняется
   useEffect(() => {
@@ -1285,6 +1310,156 @@ const ChatsListScreen = ({ navigation }) => {
     });
   }, [chats]);
 
+  // 🎨 ФОН СТРАНИЦЫ: Загрузка настроек
+  useEffect(() => {
+    loadChatsListBackground();
+  }, []);
+
+  const loadChatsListBackground = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const response = await fetch('http://151.247.196.66:3001/api/user/preferences', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      const bg = data.chats_list_background || 'default';
+      setChatsListBackground(bg);
+      
+      if (bg === 'custom') {
+        await loadCustomChatsListBackground();
+      }
+    } catch (err) {
+      setChatsListBackground('default');
+    }
+  };
+
+  const loadCustomChatsListBackground = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const response = await fetch('http://151.247.196.66:3001/api/user/chats-list-background/image', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.success && data.image) {
+        if (data.image.startsWith('data:')) {
+          setChatsListBackgroundImage(data.image);
+        } else {
+          setChatsListBackgroundImage(`data:image/jpeg;base64,${data.image}`);
+        }
+      }
+    } catch (err) {
+      console.log('Кастомный фон не найден');
+    }
+  };
+
+  const selectChatsListBackground = async (backgroundType) => {
+    setBackgroundLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await fetch('http://151.247.196.66:3001/api/user/preferences', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ chats_list_background: backgroundType })
+      });
+      
+      setChatsListBackground(backgroundType);
+      setChatsListBackgroundImage(null);
+      setBackgroundModalVisible(false);
+    } catch (err) {
+      Alert.alert('Ошибка', 'Не удалось сменить фон');
+    } finally {
+      setBackgroundLoading(false);
+    }
+  };
+
+  const pickCustomChatsListBackground = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Ошибка', 'Нужно разрешение для доступа к галерее');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [9, 16],
+      quality: 0.7,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      setBackgroundLoading(true);
+      try {
+        const base64Image = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        const token = await AsyncStorage.getItem('token');
+        
+        const response = await fetch('http://151.247.196.66:3001/api/user/chats-list-background/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ image: base64Image })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setChatsListBackground('custom');
+          setChatsListBackgroundImage(base64Image);
+          setBackgroundModalVisible(false);
+        } else {
+          Alert.alert('Ошибка', data.error || 'Не удалось загрузить изображение');
+        }
+      } catch (err) {
+        Alert.alert('Ошибка', 'Не удалось загрузить изображение');
+      } finally {
+        setBackgroundLoading(false);
+      }
+    }
+  };
+
+  const resetChatsListBackground = async () => {
+    setBackgroundLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      await fetch('http://151.247.196.66:3001/api/user/chats-list-background', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setChatsListBackground('default');
+      setChatsListBackgroundImage(null);
+      setBackgroundModalVisible(false);
+    } catch (err) {
+      Alert.alert('Ошибка', 'Не удалось сбросить фон');
+    } finally {
+      setBackgroundLoading(false);
+    }
+  };
+
+  const getChatsListBackgroundColor = () => {
+    if (chatsListBackground === 'custom' && chatsListBackgroundImage) {
+      return 'transparent';
+    }
+    
+    const backgrounds = {
+      'default': theme.background,
+      'light-blue': '#E3F2FD',
+      'light-green': '#E8F5E9',
+      'light-pink': '#FCE4EC',
+      'light-purple': '#F3E5F5',
+      'light-orange': '#FFF3E0',
+      'dark-blue': '#1E3A8A',
+      'dark-green': '#1B4332',
+    };
+    return backgrounds[chatsListBackground] || theme.background;
+  };
+
   // ⭐ НОВАЯ ФУНКЦИЯ: Загружает детали чатов в фоне с ограничением параллельных запросов
   const loadChatsDetailsAsync = async (allFriends, mapArg) => {
     try {
@@ -1903,7 +2078,16 @@ const ChatsListScreen = ({ navigation }) => {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: getChatsListBackgroundColor() }]}>
+      {/* Кастомный фон */}
+      {chatsListBackground === 'custom' && chatsListBackgroundImage && (
+        <Image 
+          source={{ uri: chatsListBackgroundImage }}
+          style={styles.backgroundImage}
+          resizeMode="cover"
+        />
+      )}
+      
       <View style={styles.contentWrapper}>
         {searchActive && (
           <View style={[styles.searchContainer, { backgroundColor: theme.surface }]}>
@@ -2141,6 +2325,199 @@ const ChatsListScreen = ({ navigation }) => {
           <Ionicons name="add" size={32} color="#fff" />
         </TouchableOpacity>
       </Animated.View>
+
+      {/* Кнопка настройки фона (рядом с FAB) */}
+      <TouchableOpacity 
+        style={[styles.backgroundSettingsBtn, { backgroundColor: theme.surface }]}
+        onPress={() => setBackgroundModalVisible(true)}
+      >
+        <Ionicons name="color-palette-outline" size={20} color={theme.primary} />
+      </TouchableOpacity>
+
+      {/* 🎨 МОДАЛЬНОЕ ОКНО ВЫБОРА ФОНА */}
+      <Modal
+        visible={backgroundModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setBackgroundModalVisible(false)}
+      >
+        <View style={styles.bgModalOverlay}>
+          <View style={[styles.bgModalContent, { backgroundColor: theme.surface }]}>
+            {/* Заголовок */}
+            <View style={[styles.bgModalHeader, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.bgModalTitle, { color: theme.text }]}>Выбрать фон</Text>
+              <TouchableOpacity onPress={() => setBackgroundModalVisible(false)}>
+                <Ionicons name="close" size={24} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            
+            {/* Индикатор загрузки */}
+            {backgroundLoading && (
+              <View style={[styles.bgLoadingOverlay, { backgroundColor: theme.surface + 'F0' }]}>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={{ color: theme.text, marginTop: 12 }}>Загрузка...</Text>
+              </View>
+            )}
+            
+            <ScrollView style={styles.bgModalScroll} showsVerticalScrollIndicator={false}>
+              {/* Кнопка загрузки своего фото */}
+              <TouchableOpacity 
+                style={[styles.bgCustomButton, { borderColor: theme.primary }]}
+                onPress={pickCustomChatsListBackground}
+                disabled={backgroundLoading}
+              >
+                <View style={[styles.bgCustomIcon, { backgroundColor: theme.primary + '20' }]}>
+                  <Ionicons name="camera" size={28} color={theme.primary} />
+                </View>
+                <View style={styles.bgCustomInfo}>
+                  <Text style={[styles.bgCustomTitle, { color: theme.text }]}>Загрузить своё фото</Text>
+                  <Text style={[styles.bgCustomSubtitle, { color: theme.textSecondary }]}>
+                    Выберите изображение из галереи
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+              </TouchableOpacity>
+              
+              {/* Предустановленные фоны */}
+              <Text style={[styles.bgSectionTitle, { color: theme.textSecondary }]}>
+                Предустановленные фоны
+              </Text>
+              
+              <View style={styles.bgGrid}>
+                {/* Default */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: theme.background, borderColor: chatsListBackground === 'default' ? theme.primary : theme.border }]}
+                  onPress={() => selectChatsListBackground('default')}
+                >
+                  <Text style={[styles.bgOptionLabel, { color: theme.text }]}>По умолчанию</Text>
+                  {chatsListBackground === 'default' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Light Blue */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#E3F2FD', borderColor: chatsListBackground === 'light-blue' ? theme.primary : '#E3F2FD' }]}
+                  onPress={() => selectChatsListBackground('light-blue')}
+                >
+                  <Text style={styles.bgOptionLabel}>Голубой</Text>
+                  {chatsListBackground === 'light-blue' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Light Green */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#E8F5E9', borderColor: chatsListBackground === 'light-green' ? theme.primary : '#E8F5E9' }]}
+                  onPress={() => selectChatsListBackground('light-green')}
+                >
+                  <Text style={styles.bgOptionLabel}>Зелёный</Text>
+                  {chatsListBackground === 'light-green' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Light Pink */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#FCE4EC', borderColor: chatsListBackground === 'light-pink' ? theme.primary : '#FCE4EC' }]}
+                  onPress={() => selectChatsListBackground('light-pink')}
+                >
+                  <Text style={styles.bgOptionLabel}>Розовый</Text>
+                  {chatsListBackground === 'light-pink' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Light Purple */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#F3E5F5', borderColor: chatsListBackground === 'light-purple' ? theme.primary : '#F3E5F5' }]}
+                  onPress={() => selectChatsListBackground('light-purple')}
+                >
+                  <Text style={styles.bgOptionLabel}>Фиолетовый</Text>
+                  {chatsListBackground === 'light-purple' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Light Orange */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#FFF3E0', borderColor: chatsListBackground === 'light-orange' ? theme.primary : '#FFF3E0' }]}
+                  onPress={() => selectChatsListBackground('light-orange')}
+                >
+                  <Text style={styles.bgOptionLabel}>Оранжевый</Text>
+                  {chatsListBackground === 'light-orange' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={14} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Dark Blue */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#1E3A8A', borderColor: chatsListBackground === 'dark-blue' ? theme.primary : '#1E3A8A' }]}
+                  onPress={() => selectChatsListBackground('dark-blue')}
+                >
+                  <Text style={[styles.bgOptionLabel, { color: '#fff' }]}>Тёмно-синий</Text>
+                  {chatsListBackground === 'dark-blue' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: '#fff' }]}>
+                      <Ionicons name="checkmark" size={14} color={theme.primary} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                
+                {/* Dark Green */}
+                <TouchableOpacity 
+                  style={[styles.bgOption, { backgroundColor: '#1B4332', borderColor: chatsListBackground === 'dark-green' ? theme.primary : '#1B4332' }]}
+                  onPress={() => selectChatsListBackground('dark-green')}
+                >
+                  <Text style={[styles.bgOptionLabel, { color: '#fff' }]}>Тёмно-зелёный</Text>
+                  {chatsListBackground === 'dark-green' && (
+                    <View style={[styles.bgCheckmark, { backgroundColor: '#fff' }]}>
+                      <Ionicons name="checkmark" size={14} color={theme.primary} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+              
+              {/* Кнопка сброса */}
+              {chatsListBackground !== 'default' && (
+                <TouchableOpacity 
+                  style={[styles.bgResetButton, { borderColor: '#EF4444' }]}
+                  onPress={resetChatsListBackground}
+                  disabled={backgroundLoading}
+                >
+                  <Ionicons name="refresh" size={20} color="#EF4444" />
+                  <Text style={styles.bgResetText}>Сбросить на стандартный</Text>
+                </TouchableOpacity>
+              )}
+              
+              {/* Превью текущего кастомного фона */}
+              {chatsListBackground === 'custom' && chatsListBackgroundImage && (
+                <View style={styles.bgCurrentPreview}>
+                  <Text style={[styles.bgSectionTitle, { color: theme.textSecondary }]}>
+                    Текущий кастомный фон
+                  </Text>
+                  <Image 
+                    source={{ uri: chatsListBackgroundImage }}
+                    style={styles.bgPreviewImage}
+                    resizeMode="cover"
+                  />
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -2420,6 +2797,160 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 6,
+  },
+  
+  // 🎨 ФОН СТРАНИЦЫ
+  backgroundImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  backgroundSettingsBtn: {
+    position: 'absolute',
+    bottom: 100,
+    right: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  
+  // Модальное окно выбора фона
+  bgModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  bgModalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    paddingBottom: 30,
+  },
+  bgModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+  },
+  bgModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  bgModalScroll: {
+    padding: 16,
+  },
+  bgLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  bgCustomButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    marginBottom: 20,
+  },
+  bgCustomIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bgCustomInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  bgCustomTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  bgCustomSubtitle: {
+    fontSize: 13,
+  },
+  bgSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  bgGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -6,
+  },
+  bgOption: {
+    width: '46%',
+    aspectRatio: 1.3,
+    margin: '2%',
+    borderRadius: 16,
+    borderWidth: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  bgOptionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+  },
+  bgCheckmark: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bgResetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginTop: 20,
+    gap: 8,
+  },
+  bgResetText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#EF4444',
+  },
+  bgCurrentPreview: {
+    marginTop: 20,
+  },
+  bgPreviewImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 16,
   },
 });
 

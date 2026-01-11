@@ -26,6 +26,7 @@ import { Gyroscope, Accelerometer } from 'expo-sensors';
 import { profileAPI, adminAPI } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import { useModalAlert } from '../contexts/ModalAlertContext';
+import { disconnectSocket } from '../services/globalSocket';
 
 const ProfileScreen = ({ navigation }) => {
   const { theme, toggleTheme, isDark } = useTheme();
@@ -833,6 +834,14 @@ const ProfileScreen = ({ navigation }) => {
                 console.log('🚪 Выход из аккаунта');
                 console.log('ℹ️ Цвет карточки сохранен в БД - будет восстановлен при входе');
                 console.log('🧹 Очищаем AsyncStorage...');
+                
+                // ⭐ КРИТИЧНО: Отключаем socket и отправляем офлайн статус перед logout
+                try {
+                  await disconnectSocket();
+                  console.log('✅ Socket отключен, офлайн статус отправлен');
+                } catch (err) {
+                  console.error('⚠️ Ошибка при отключении socket:', err);
+                }
                 
                 // Очищаем все данные аккаунта
                 const keysToDelete = await AsyncStorage.getAllKeys();
