@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,25 +7,86 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
-  Image,
   ActivityIndicator,
+  Animated,
+  Dimensions,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { authAPI } from '../services/api';
-import { useTheme } from '../contexts/ThemeContext';
 import { useModalAlert } from '../contexts/ModalAlertContext';
 import BannedAccountModal from '../components/BannedAccountModal';
 import { resendPushTokenAfterLogin } from '../services/notifications';
 
 WebBrowser.maybeCompleteAuthSession();
 
+const { width } = Dimensions.get('window');
+
+// Анимированный инпут компонент с иконкой
+const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyboardType, autoCapitalize, editable, icon }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const [isFocused, setIsFocused] = useState(false);
+
+  const handleFocus = () => {
+    setIsFocused(true);
+    Animated.spring(scaleAnim, {
+      toValue: 1.02,
+      friction: 8,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 8,
+      tension: 100,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.inputWrapper,
+        {
+          transform: [{ scale: scaleAnim }],
+          borderColor: isFocused ? '#FFA500' : '#2A2A3C',
+        },
+        isFocused && styles.inputWrapperFocused,
+      ]}
+    >
+      {icon && (
+        <Ionicons 
+          name={icon} 
+          size={20} 
+          color={isFocused ? '#FFA500' : 'rgba(255,255,255,0.4)'} 
+          style={styles.inputIcon}
+        />
+      )}
+      <TextInput
+        style={styles.input}
+        placeholder={placeholder}
+        placeholderTextColor="rgba(255, 255, 255, 0.4)"
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        editable={editable}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+      />
+    </Animated.View>
+  );
+};
+
 const LoginScreen = ({ navigation }) => {
-  const { theme, isDark } = useTheme();
   const { error: showError, warning: showWarning } = useModalAlert();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,13 +94,35 @@ const LoginScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [showBannedModal, setShowBannedModal] = useState(false);
   const [bannedInfo, setBannedInfo] = useState({ reason: '', bannedAt: null, unbanAt: null });
+  
+  // Анимации для успешного входа
+  const successAnim = useRef(new Animated.Value(0)).current;
+  const screenFadeAnim = useRef(new Animated.Value(1)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const ring1Anim = useRef(new Animated.Value(0)).current;
+  const ring2Anim = useRef(new Animated.Value(0)).current;
+  const confettiAnim = useRef(new Animated.Value(0)).current;
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+
+  // Цвета темы (оранжевый)
+  const theme = { primary: '#FFA500' };
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: "YOUR_ANDROID_CLIENT_ID",
-    iosClientId: "YOUR_IOS_CLIENT_ID",
-    expoClientId: "YOUR_EXPO_CLIENT_ID",
-    webClientId: "YOUR_WEB_CLIENT_ID",
+    // Android Client ID для production сборки
+    androidClientId: "95571551481-g6kuqjkh23eja996jrifah4unc6d1fcd.apps.googleusercontent.com",
+    // Web Client ID для Expo Go
+    webClientId: "95571551481-8mvkqnto58mv6hr0395ct75cs56gfbus.apps.googleusercontent.com",
+    // Expo Client ID (тот же что и Web)
+    expoClientId: "95571551481-8mvkqnto58mv6hr0395ct75cs56gfbus.apps.googleusercontent.com",
   });
+
+  // Выведем реальный redirectUri в консоль
+  useEffect(() => {
+    if (request) {
+      console.log('🔥 REDIRECT URI:', request.redirectUri);
+    }
+  }, [request]);
 
   useEffect(() => {
     if (response?.type === 'success') {
@@ -64,6 +147,77 @@ const LoginScreen = ({ navigation }) => {
     } catch (error) {
       console.error('Ошибка при загрузке сохраненных данных:', error);
     }
+  };
+
+  // Функция для анимации успешного входа
+  const playSuccessAnimation = (callback) => {
+    setShowSuccessOverlay(true);
+    
+    // Запускаем все анимации параллельно
+    Animated.parallel([
+      // Основной круг с галочкой
+      Animated.spring(successAnim, {
+        toValue: 1,
+        friction: 4,
+        tension: 100,
+        useNativeDriver: true,
+      }),
+      // Пульсация
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ]),
+        { iterations: 2 }
+      ),
+      // Первое кольцо
+      Animated.timing(ring1Anim, {
+        toValue: 1,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+      // Второе кольцо с задержкой
+      Animated.sequence([
+        Animated.delay(200),
+        Animated.timing(ring2Anim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ]),
+      // Конфетти
+      Animated.timing(confettiAnim, {
+        toValue: 1,
+        duration: 1200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Переход на следующий экран после анимации
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(screenFadeAnim, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 0.9,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        callback();
+      });
+    }, 1200);
   };
 
   const showValidationModal = useCallback((title, message) => {
@@ -120,7 +274,9 @@ const LoginScreen = ({ navigation }) => {
       // Пересылаем push токен на сервер после успешного входа через Google
       await resendPushTokenAfterLogin();
       
-      navigation.replace('Main');
+      playSuccessAnimation(() => {
+        navigation.replace('Main');
+      });
     } catch (err) {
       console.error('Ошибка входа через Google:', err);
       showErrorModal('Ошибка', 'Не удалось войти через Google');
@@ -178,8 +334,10 @@ const LoginScreen = ({ navigation }) => {
       
       // Если администратор - показываем админ-панель
       if (isAdmin) {
-        navigation.replace('AdminPanel');
         setIsLoading(false);
+        playSuccessAnimation(() => {
+          navigation.replace('AdminPanel');
+        });
         return;
       }
       
@@ -198,7 +356,10 @@ const LoginScreen = ({ navigation }) => {
         // Продолжаем даже если ошибка
       }
       
-      navigation.replace('Main');
+      setIsLoading(false);
+      playSuccessAnimation(() => {
+        navigation.replace('Main');
+      });
     } catch (err) {
       console.log('Ошибка входа:', err);
       
@@ -226,139 +387,124 @@ const LoginScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView edges={["top", "bottom"]} style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.gradient, { backgroundColor: theme.background }]}>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
-        >
-          <ScrollView 
-            contentContainerStyle={styles.scrollContainer}
-            showsVerticalScrollIndicator={false}
+    <Animated.View 
+      style={[
+        styles.container, 
+        { 
+          opacity: screenFadeAnim,
+          transform: [{ scale: scaleAnim }]
+        }
+      ]}
+    >
+      {/* Декоративные круги */}
+      <View style={styles.orangeCircle} />
+      <View style={styles.orangeCircleSmall} />
+      <View style={styles.purpleCircle} />
+      
+      {/* Заголовок */}
+      <View style={styles.headerContainer}>
+        <Text style={styles.headerTitle}>Вход</Text>
+        <Text style={styles.headerSubtitle}>Добро пожаловать!</Text>
+      </View>
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}
+      >
+        <View style={styles.centerContainer}>
+          {/* Тёмный контейнер с формой */}
+          <LinearGradient
+            colors={['#3D3D54', '#2E2E42', '#222230']}
+            locations={[0, 0.4, 1]}
+            style={styles.formCard}
           >
-            <View style={styles.logoSection}>
-              <View style={[styles.logoContainer, { backgroundColor: theme.primary + '15' }]}>
-                <Text style={[styles.logoText, { color: theme.primary }]}>M</Text>
-              </View>
-              <Text style={[styles.brandName, { color: theme.text }]}>Connect</Text>
-            </View>
+            {/* Декоративная линия сверху */}
+            <View style={styles.formCardAccent} />
+            
+            <AnimatedInput
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              editable={!isLoading}
+              icon="mail-outline"
+            />
 
-            <View style={styles.headerText}>
-              <Text style={[styles.title, { color: theme.text }]}>Добро пожаловать!</Text>
-              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                Войдите в аккаунт и начните общение
-              </Text>
-            </View>
-
-            <View style={styles.formSection}>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: theme.text }]}>Email</Text>
-                <View style={[styles.inputWrapper, { 
-                  backgroundColor: theme.inputBackground,
-                  borderColor: theme.border
-                }]}>
-                  <Ionicons name="mail" size={18} color={theme.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={[styles.input, { color: theme.text }]}
-                    placeholder="your@email.com"
-                    placeholderTextColor={theme.textSecondary}
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    editable={!isLoading}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: theme.text }]}>Пароль</Text>
-                <View style={[styles.inputWrapper, { 
-                  backgroundColor: theme.inputBackground,
-                  borderColor: theme.border
-                }]}>
-                  <Ionicons name="lock-closed" size={18} color={theme.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={[styles.input, { color: theme.text }]}
-                    placeholder="••••••••"
-                    placeholderTextColor={theme.textSecondary}
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    editable={!isLoading}
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity 
-                style={styles.rememberMe}
-                onPress={() => setRememberMe(!rememberMe)}
-              >
-                <View style={[styles.checkbox, { 
-                  backgroundColor: rememberMe ? theme.primary : 'transparent',
-                  borderColor: rememberMe ? theme.primary : theme.border
-                }]}>
-                  {rememberMe && <Ionicons name="checkmark" size={14} color="#fff" />}
-                </View>
-                <Text style={[styles.rememberMeText, { color: theme.textSecondary }]}>
-                  Запомнить меня
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <AnimatedInput
+              placeholder="Пароль"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={true}
+              editable={!isLoading}
+              icon="lock-closed-outline"
+            />
 
             <TouchableOpacity 
-              style={[styles.loginButton, { backgroundColor: theme.primary, opacity: isLoading ? 0.6 : 1 }]}
+              style={[styles.loginButton, { opacity: isLoading ? 0.7 : 1 }]}
               onPress={handleLogin}
               disabled={isLoading}
-              activeOpacity={0.85}
+              activeOpacity={0.8}
             >
-              {isLoading ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="log-in" size={18} color="#fff" style={{ marginRight: 8 }} />
-                  <Text style={styles.loginButtonText}>Войти</Text>
-                </>
-              )}
+              <LinearGradient
+                colors={['#FFB347', '#FFA500', '#FF8C00']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.loginButtonGradient}
+              >
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="log-in-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.loginButtonText}>Войти</Text>
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
 
             <View style={styles.divider}>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-              <Text style={[styles.dividerText, { color: theme.textSecondary }]}>или</Text>
-              <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>или</Text>
+              <View style={styles.dividerLine} />
             </View>
 
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Нет аккаунта? </Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                <Text style={styles.footerLink}>Зарегистрироваться</Text>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+
+          {/* Кнопки социальных сетей */}
+          <View style={styles.socialContainer}>
             <TouchableOpacity 
-              style={[styles.googleButton, { 
-                backgroundColor: theme.surface,
-                borderColor: theme.border
-              }]}
+              style={styles.socialButton}
               onPress={() => promptAsync()}
               disabled={!request || isLoading}
               activeOpacity={0.8}
             >
-              <Image 
-                source={{ uri: 'https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg' }}
-                style={styles.googleIcon}
-              />
-              <Text style={[styles.googleButtonText, { color: theme.text }]}>
-                Google
-              </Text>
+              <View style={styles.socialIconContainer}>
+                <Text style={styles.googleIcon}>G</Text>
+              </View>
+              <Text style={styles.socialButtonText}>Войти с Google</Text>
             </TouchableOpacity>
 
-            <View style={styles.footer}>
-              <Text style={[styles.footerText, { color: theme.textSecondary }]}>
-                Нет аккаунта?{' '}
-              </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                <Text style={[styles.footerLink, { color: theme.primary }]}>
-                  Зарегистрироваться
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
+            <TouchableOpacity 
+              style={[styles.socialButton, styles.yandexButton]}
+              onPress={() => {}}
+              disabled={isLoading}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.socialIconContainer, styles.yandexIconContainer]}>
+                <Text style={styles.yandexIcon}>Я</Text>
+              </View>
+              <Text style={styles.socialButtonText}>Войти с Яндекс</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
 
       {/* Модалка для заблокированного аккаунта */}
       <BannedAccountModal
@@ -368,181 +514,419 @@ const LoginScreen = ({ navigation }) => {
         bannedAt={bannedInfo.bannedAt}
         unbanAt={bannedInfo.unbanAt}
       />
-    </SafeAreaView>
+
+      {/* Оверлей успешного входа */}
+      {showSuccessOverlay && (
+        <View style={styles.successOverlay}>
+          {/* Контейнер для центральной анимации */}
+          <View style={styles.successAnimationContainer}>
+            {/* Декоративные частицы/конфетти */}
+            {[...Array(12)].map((_, i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.confettiParticle,
+                  {
+                    backgroundColor: ['#FFA500', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96E6A1', '#DDA0DD'][i % 6],
+                    transform: [
+                      { translateX: confettiAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, Math.cos(i * 30 * Math.PI / 180) * 150],
+                      })},
+                      { translateY: confettiAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, Math.sin(i * 30 * Math.PI / 180) * 150],
+                      })},
+                      { rotate: confettiAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', `${360 + i * 30}deg`],
+                      })},
+                      { scale: confettiAnim.interpolate({
+                        inputRange: [0, 0.5, 1],
+                        outputRange: [0, 1, 0.5],
+                      })},
+                    ],
+                    opacity: confettiAnim.interpolate({
+                      inputRange: [0, 0.2, 0.8, 1],
+                      outputRange: [0, 1, 1, 0],
+                    }),
+                  },
+                ]}
+              />
+            ))}
+
+            {/* Расширяющиеся кольца */}
+            <Animated.View
+              style={[
+                styles.successRing,
+                {
+                  transform: [{ scale: ring1Anim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.5, 2.5],
+                  })}],
+                  opacity: ring1Anim.interpolate({
+                    inputRange: [0, 0.3, 1],
+                    outputRange: [0, 0.6, 0],
+                  }),
+                },
+              ]}
+            />
+            <Animated.View
+              style={[
+                styles.successRing,
+                styles.successRing2,
+                {
+                  transform: [{ scale: ring2Anim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.5, 2],
+                  })}],
+                  opacity: ring2Anim.interpolate({
+                    inputRange: [0, 0.3, 1],
+                    outputRange: [0, 0.4, 0],
+                  }),
+                },
+              ]}
+            />
+
+            {/* Основной круг с галочкой */}
+            <Animated.View 
+              style={[
+                styles.successCircleOuter,
+                {
+                  transform: [{ scale: successAnim }],
+                  opacity: successAnim,
+                }
+              ]}
+            >
+            <LinearGradient
+              colors={['#FFB347', '#FFA500', '#FF8C00']}
+              style={styles.successCircle}
+            >
+              {/* Пульсирующий блик */}
+              <Animated.View
+                style={[
+                  styles.successPulse,
+                  {
+                    opacity: pulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.3, 0],
+                    }),
+                    transform: [{ scale: pulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.5],
+                    })}],
+                  },
+                ]}
+              />
+              <Ionicons name="checkmark" size={70} color="#fff" />
+            </LinearGradient>
+          </Animated.View>
+          </View>
+
+          {/* Текст */}
+          <Animated.View
+            style={[
+              styles.successTextContainer,
+              { 
+                opacity: successAnim,
+                transform: [{ translateY: successAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [20, 0],
+                })}],
+              }
+            ]}
+          >
+            <Text style={styles.successText}>Добро пожаловать!</Text>
+            <Text style={styles.successSubtext}>Вход выполнен успешно</Text>
+          </Animated.View>
+        </View>
+      )}
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#6B6B8D',
   },
-  gradient: {
-    flex: 1,
+  orangeCircle: {
+    position: 'absolute',
+    top: -60,
+    left: -60,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: '#FFA500',
+    shadowColor: '#FFA500',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
+    elevation: 10,
+  },
+  orangeCircleSmall: {
+    position: 'absolute',
+    top: 80,
+    left: 50,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FFB347',
+    opacity: 0.6,
+  },
+  purpleCircle: {
+    position: 'absolute',
+    bottom: 100,
+    right: -40,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#5A5A7A',
+    opacity: 0.5,
+  },
+  headerContainer: {
+    position: 'absolute',
+    top: 60,
+    right: 24,
+    alignItems: 'flex-end',
+    zIndex: 10,
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#FFA500',
+    textShadowColor: 'rgba(255, 165, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.7)',
+    marginTop: 4,
   },
   keyboardView: {
     flex: 1,
   },
-  scrollContainer: {
-    flexGrow: 1,
+  centerContainer: {
+    flex: 1,
     justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  formCard: {
+    borderRadius: 28,
     paddingHorizontal: 24,
-    paddingVertical: 40,
+    paddingTop: 50,
+    paddingBottom: 30,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 15,
   },
-  logoSection: {
-    alignItems: 'center',
-    marginBottom: 40,
-  },
-  logoContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  logoText: {
-    fontSize: 40,
-    fontWeight: '800',
-    letterSpacing: -1,
-  },
-  brandName: {
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  headerText: {
-    marginBottom: 36,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    marginBottom: 8,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 22,
-    letterSpacing: 0.2,
-  },
-  formSection: {
-    marginBottom: 24,
-  },
-  inputGroup: {
-    marginBottom: 18,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-    letterSpacing: 0.3,
+  formCardAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 20,
+    right: 20,
+    height: 4,
+    backgroundColor: '#FFA500',
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
   },
   inputWrapper: {
+    backgroundColor: '#1A1A28',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    height: 52,
-    borderWidth: 1.5,
+    borderWidth: 2,
+  },
+  inputWrapperFocused: {
+    shadowColor: '#FFA500',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 8,
   },
   inputIcon: {
-    marginRight: 10,
+    marginRight: 12,
   },
   input: {
     flex: 1,
-    fontSize: 15,
-    letterSpacing: 0.2,
+    fontSize: 16,
+    color: '#FFFFFF',
     height: '100%',
   },
-  rememberMe: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  rememberMeText: {
-    fontSize: 14,
-    letterSpacing: 0.2,
-  },
   loginButton: {
-    height: 54,
-    borderRadius: 12,
+    height: 56,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginTop: 20,
+    marginBottom: 20,
+    shadowColor: '#FFA500',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  loginButtonGradient: {
+    flex: 1,
+    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    flexDirection: 'row',
-    marginBottom: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 6,
-      },
-    }),
   },
   loginButtonText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 16,
-    letterSpacing: 0.3,
+    fontSize: 18,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 24,
+    marginVertical: 16,
   },
   dividerLine: {
     flex: 1,
     height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
   },
   dividerText: {
+    color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 13,
+    marginHorizontal: 16,
     fontWeight: '500',
-    paddingHorizontal: 12,
-  },
-  googleButton: {
-    height: 52,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexDirection: 'row',
-    borderWidth: 1.5,
-    marginBottom: 24,
-  },
-  googleIcon: {
-    width: 20,
-    height: 20,
-    marginRight: 10,
-  },
-  googleButtonText: {
-    fontWeight: '600',
-    fontSize: 15,
-    letterSpacing: 0.2,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
   },
   footerText: {
     fontSize: 14,
-    letterSpacing: 0.2,
+    color: '#FFFFFF',
   },
   footerLink: {
     fontSize: 14,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    color: '#FFA500',
+  },
+  socialContainer: {
+    marginTop: 24,
+    gap: 12,
+  },
+  socialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    height: 50,
+    borderRadius: 25,
+    paddingHorizontal: 16,
+  },
+  yandexButton: {
+    backgroundColor: '#FFCC00',
+  },
+  socialIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  yandexIconContainer: {
+    backgroundColor: '#FF0000',
+  },
+  googleIcon: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#4285F4',
+  },
+  yandexIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  socialButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1E1E2E',
+  },
+  // Стили для анимации успешного входа
+  successOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(30, 30, 46, 0.98)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  confettiParticle: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  successAnimationContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 300,
+    height: 300,
+  },
+  successRing: {
+    position: 'absolute',
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 3,
+    borderColor: '#FFA500',
+  },
+  successRing2: {
+    borderColor: '#FF6B6B',
+    borderWidth: 2,
+  },
+  successCircleOuter: {
+    shadowColor: '#FFA500',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 40,
+    elevation: 25,
+  },
+  successCircle: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  successPulse: {
+    position: 'absolute',
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#fff',
+  },
+  successTextContainer: {
+    alignItems: 'center',
+    marginTop: 32,
+  },
+  successText: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(255, 165, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+    letterSpacing: 0.5,
+  },
+  successSubtext: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.7)',
   },
 });
 

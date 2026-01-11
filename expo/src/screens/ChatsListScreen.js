@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { messageAPI, groupAPI, friendAPI, pinnedChatsAPI, profileAPI } from '../services/api';
 import { subscribeToNewMessages } from '../services/globalNotifications';
 import { getOrCreateSocket } from '../services/globalSocket';
+import { onMessageSent, onGroupMessageSent, onMessageRead } from '../services/appEvents';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,6 +53,12 @@ const ChatsListScreen = ({ navigation }) => {
   const fabOpacityAnim = useRef(new Animated.Value(1)).current; // ✅ Анимация прозрачности FAB
   const lastScrollY = useRef(0); // ✅ Отслеживаем позицию скролла
   const socketConnectionRef = useRef(null); // ✅ Сохраняем socket в ref для использования в других местах
+  const currentUserRef = useRef(null); // ✅ Ref для актуального currentUser в socket обработчиках
+
+  // ✅ Обновляем ref когда currentUser меняется
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // 🟢 Подключаем hook для обновления статусов онлайн
   useOnlineStatus((statusUpdate) => {
@@ -112,6 +119,10 @@ const ChatsListScreen = ({ navigation }) => {
   };
 
   useEffect(() => {
+    console.log('\n' + '🏠'.repeat(30));
+    console.log('🏠 ChatsListScreen: МОНТИРОВАНИЕ компонента');
+    console.log('🏠'.repeat(30) + '\n');
+    
     let unsub;
     let socketConnection = null;
 
@@ -120,6 +131,7 @@ const ChatsListScreen = ({ navigation }) => {
       const storedUser = await AsyncStorage.getItem('user');
       const user = storedUser ? JSON.parse(storedUser) : null;
       setCurrentUser(user);
+      console.log('🏠 ChatsListScreen: Загружен пользователь:', user?.id, user?.username);
       
       const localMap = await loadPinnedFromStorage();
       setPinnedMap(localMap);
@@ -207,49 +219,112 @@ const ChatsListScreen = ({ navigation }) => {
         // ✅ Сохраняем socket в ref для использования в других useEffect'ах
         socketConnectionRef.current = socketConnection;
 
-        socketConnection.on('connect', () => {
-          console.log('ChatsListScreen: Socket подключен');
-          setIsConnected(true); // ✅ Устанавливаем статус подключения
-          socketConnection.emit('authenticate_socket', { user_id: currentUser.id });
-          
-          // ✅ КРИТИЧНО: Присоединяемся к личной комнате текущего пользователя
-          socketConnection.emit('join_personal_room', currentUser.id);
-          console.log(`✅ ChatsListScreen: Присоединились к личной комнате user_${currentUser.id}`);
-          
-          // ✅ ДИАГНОСТИКА: Слушаем все события для отладки
-          socketConnection.onAny((eventName, ...args) => {
-            if (eventName.includes('message') || eventName.includes('group') || eventName.includes('typing')) {
-              console.log(`📨 ChatsListScreen: Получено событие ${eventName}`, args[0]);
-            }
+        console.log('\n' + '🔌'.repeat(30));
+        console.log('🔌 ChatsListScreen: Socket получен');
+        console.log('   socket.id:', socketConnection.id);
+        console.log('   socket.connected:', socketConnection.connected);
+        console.log('   user.id:', user?.id);
+        console.log('   currentUserRef.current:', currentUserRef.current);
+        console.log('🔌'.repeat(30) + '\n');
+
+        // 🔍 ДИАГНОСТИКА: Логируем ВСЕ socket события
+        socketConnection.onAny((eventName, ...args) => {
+          if (['ping', 'pong'].includes(eventName)) return;
+          const dataStr = args[0] ? JSON.stringify(args[0]).substring(0, 200) : 'no data';
+          console.log(`📨 [SOCKET EVENT] ${eventName}: ${dataStr}`);
+        });
+
+        // ⭐ КРИТИЧНО: Присоединяемся к личной комнате СРАЗУ после получения socket
+        if (user && user.id) {
+          socketConnection.emit('join_personal_room', user.id);
+          socketConnection.emit('authenticate_socket', { user_id: user.id }, (response) => {
+            console.log('🔐 authenticate_socket ОТВЕТ:', response);
           });
+          // ⭐ НОВОЕ: Подписываемся на события чтения наших сообщений
+          socketConnection.emit('subscribe_read_notifications', { user_id: user.id });
+          console.log(`✅ ChatsListScreen: Присоединились к личной комнате user_${user.id} (СРАЗУ)`);
+          console.log(`✅ ChatsListScreen: Подписались на события чтения`);
+        } else {
+          console.log('⚠️ ChatsListScreen: user отсутствует, не можем присоединиться к комнате!');
+        }
+
+        socketConnection.on('connect', () => {
+          console.log('\n🟢 ChatsListScreen: Socket CONNECT event');
+          console.log('   socket.id:', socketConnection.id);
+          setIsConnected(true);
+          
+          // При переподключении снова присоединяемся к комнате
+          const userId = currentUserRef.current?.id || user?.id;
+          if (userId) {
+            socketConnection.emit('authenticate_socket', { user_id: userId });
+            socketConnection.emit('join_personal_room', userId);
+            socketConnection.emit('subscribe_read_notifications', { user_id: userId });
+            console.log(`✅ ChatsListScreen: Переподключились к личной комнате user_${userId}`);
+          }
         });
 
           // Слушаем новые личные сообщения
           socketConnection.on('new_message', (message) => {
-            console.log('ChatsListScreen: Получено новое сообщение', message);
+            console.log('\n' + '📩'.repeat(30));
+            console.log('📩 ChatsListScreen: new_message ПОЛУЧЕНО!');
+            console.log('   message.id:', message.id);
+            console.log('   message.sender_id:', message.sender_id);
+            console.log('   message.receiver_id:', message.receiver_id);
+            console.log('   message.message:', message.message?.substring(0, 50));
+            console.log('   currentUserRef.current?.id:', currentUserRef.current?.id);
+            console.log('📩'.repeat(30) + '\n');
+            
+            // ⭐ КРИТИЧНО: Используем ref для актуального user id
+            const myId = currentUserRef.current?.id;
+            
+            if (!myId) {
+              console.log('⚠️ myId отсутствует! currentUserRef.current:', currentUserRef.current);
+              return;
+            }
+            
             setChats(prev => {
-              // Определяем ID чата: если отправитель - это мы, то ищем по receiver_id, иначе по sender_id
-              const chatId = message.sender_id === currentUser?.id ? message.receiver_id : message.sender_id;
+              console.log('   📋 Текущие чаты:', prev.map(c => ({ id: c.id, lastMessage: c.lastMessage?.substring(0, 20) })));
+              
+              // Определяем ID чата
+              const isMyMessage = String(message.sender_id) === String(myId);
+              const chatId = isMyMessage ? message.receiver_id : message.sender_id;
+              
+              console.log(`   🔍 isMyMessage: ${isMyMessage}, chatId: ${chatId}`);
+              
               const idx = prev.findIndex(c => String(c.id) === String(chatId));
               
-              if (idx === -1) return prev;
+              if (idx === -1) {
+                console.log('   ⚠️ Чат НЕ НАЙДЕН! chatId:', chatId, 'Доступные ID:', prev.map(c => c.id));
+                return prev;
+              }
+              
+              console.log('   ✅ Чат НАЙДЕН на индексе:', idx);
               
               const item = { ...prev[idx] };
-              item.lastMessage = message.message;
-              item.lastMessageTime = new Date().toISOString();
-              item.lastMessageReadStatus = message.is_read || false;
+              
+              // Обновляем последнее сообщение
+              item.lastMessage = message.message || '📎 Медиа';
+              item.lastMessageTime = message.created_at || new Date().toISOString();
               item.lastMessageId = message.id;
               item.lastMessageSenderId = message.sender_id;
               
-              // Увеличиваем непрочитанные, если это не от нас
-              if (message.sender_id !== currentUser?.id) {
+              if (isMyMessage) {
+                // Моё сообщение - одна галочка
+                item.lastMessageReadStatus = false;
+                console.log('   ✅ Моё сообщение - одна галочка ✓');
+              } else {
+                // Входящее - увеличиваем счётчик
                 item.unreadCount = (item.unreadCount || 0) + 1;
+                item.lastMessageReadStatus = false;
+                console.log('   ✅ Входящее сообщение - счётчик:', item.unreadCount);
               }
+              
+              console.log('   📝 Обновленный lastMessage:', item.lastMessage);
               
               const copy = [...prev];
               copy.splice(idx, 1);
               
-              // Сортируем: закреплённые остаются на месте, остальные идут вверх
+              // Сортировка
               if (item.pinned) {
                 copy.splice(idx, 0, item);
               } else {
@@ -257,36 +332,55 @@ const ChatsListScreen = ({ navigation }) => {
                 copy.splice(pinnedCount, 0, item);
               }
               
+              console.log('   ✅ Чат обновлён и отсортирован');
               return copy;
             });
           });
 
           // Слушаем новые групповые сообщения
           socketConnection.on('new_group_message', (message) => {
-            console.log('ChatsListScreen: Получено новое групповое сообщение', message);
+            console.log('\n' + '='.repeat(50));
+            console.log('📨 ChatsListScreen: new_group_message получено');
+            console.log('   Данные:', JSON.stringify(message, null, 2));
+            console.log('='.repeat(50));
+            
+            // ⭐ КРИТИЧНО: Используем ref для актуального user id
+            const myId = currentUserRef.current?.id;
+            
             setGroups(prev => {
               const groupId = message.group_id;
               const idx = prev.findIndex(g => String(g.id) === String(groupId));
               
-              if (idx === -1) return prev;
+              if (idx === -1) {
+                console.log('   ⚠️ Группа не найдена:', groupId);
+                return prev;
+              }
               
               const item = { ...prev[idx] };
-              item.lastMessage = message.message;
-              item.lastMessageTime = new Date().toISOString();
-              // Для групп: если это наше сообщение - оно сразу считается прочитанным, иначе нет
-              item.lastMessageReadStatus = message.sender_id === currentUser?.id ? true : false;
+              
+              // Обновляем последнее сообщение
+              item.lastMessage = message.message || '📎 Медиа';
+              item.lastMessageTime = message.created_at || new Date().toISOString();
               item.lastMessageId = message.id;
               item.lastMessageSenderId = message.sender_id;
               
-              // Увеличиваем непрочитанные, если это не от нас
-              if (message.sender_id !== currentUser?.id) {
+              const isMyMessage = String(message.sender_id) === String(myId);
+              
+              if (isMyMessage) {
+                // Моё сообщение - одна галочка
+                item.lastMessageReadStatus = false;
+                console.log('   ✅ Моё сообщение в группе - одна галочка ✓');
+              } else {
+                // Входящее - увеличиваем счётчик
                 item.unreadCount = (item.unreadCount || 0) + 1;
+                item.lastMessageReadStatus = false;
+                console.log('   ✅ Входящее сообщение в группе - счётчик:', item.unreadCount);
               }
               
               const copy = [...prev];
               copy.splice(idx, 1);
               
-              // Сортируем: закреплённые остаются на месте, остальные идут вверх
+              // Сортировка
               if (item.pinned) {
                 copy.splice(idx, 0, item);
               } else {
@@ -298,17 +392,50 @@ const ChatsListScreen = ({ navigation }) => {
             });
           });
 
-          // ✅ Слушаем событие от ChatScreen когда ВЫ отправили сообщение
-          socketConnection.on('message_sent', (message) => {
-            console.log('ChatsListScreen: Получено событие message_sent (мы отправили сообщение)', message);
-            console.log(`   message_id: ${message.id}`);
-            console.log(`   sender_id: ${message.sender_id}`);
-            console.log(`   receiver_id: ${message.receiver_id}`);
-            console.log(`   group_id: ${message.group_id}`);
-            console.log(`   is_read: ${message.is_read}`);
+          // ⭐ НОВЫЙ ОБРАБОТЧИК: Локальное событие от ChatScreen для мгновенного обновления
+          socketConnection.on('new_message_local', (message) => {
+            console.log('\n' + '🚀'.repeat(30));
+            console.log('🚀 ChatsListScreen: new_message_local получено (ЛОКАЛЬНО от ChatScreen)');
+            console.log('   message:', message);
+            console.log('🚀'.repeat(30) + '\n');
             
-            if (message.group_id) {
-              // Это групповое сообщение
+            // Обрабатываем как обычное new_message
+            const myId = currentUserRef.current?.id;
+            
+            if (!message.group_id) {
+              // Личное сообщение
+              setChats(prev => {
+                const chatId = message.receiver_id;
+                const idx = prev.findIndex(c => String(c.id) === String(chatId));
+                
+                if (idx === -1) {
+                  console.log('   ⚠️ Чат не найден:', chatId);
+                  return prev;
+                }
+                
+                const item = { ...prev[idx] };
+                item.lastMessage = message.message || '📎 Медиа';
+                item.lastMessageTime = message.created_at || new Date().toISOString();
+                item.lastMessageId = message.id;
+                item.lastMessageSenderId = message.sender_id;
+                item.lastMessageReadStatus = false; // Одна галочка
+                
+                console.log('   ✅ Чат обновлён локально, lastMessage:', item.lastMessage);
+                
+                const copy = [...prev];
+                copy.splice(idx, 1);
+                
+                if (item.pinned) {
+                  copy.splice(idx, 0, item);
+                } else {
+                  const pinnedCount = copy.filter(c => c.pinned).length;
+                  copy.splice(pinnedCount, 0, item);
+                }
+                
+                return copy;
+              });
+            } else {
+              // Групповое сообщение
               setGroups(prev => {
                 const groupId = message.group_id;
                 const idx = prev.findIndex(g => String(g.id) === String(groupId));
@@ -316,10 +443,59 @@ const ChatsListScreen = ({ navigation }) => {
                 if (idx === -1) return prev;
                 
                 const item = { ...prev[idx] };
-                item.lastMessage = message.message;
+                item.lastMessage = message.message || '📎 Медиа';
                 item.lastMessageTime = message.created_at || new Date().toISOString();
-                item.lastMessageReadStatus = true; // Наше сообщение сразу прочитано
+                item.lastMessageId = message.id;
                 item.lastMessageSenderId = message.sender_id;
+                item.lastMessageReadStatus = false;
+                
+                console.log('   ✅ Группа обновлена локально, lastMessage:', item.lastMessage);
+                
+                const copy = [...prev];
+                copy.splice(idx, 1);
+                
+                if (item.pinned) {
+                  copy.splice(idx, 0, item);
+                } else {
+                  const pinnedCount = copy.filter(c => c.pinned).length;
+                  copy.splice(pinnedCount, 0, item);
+                }
+                
+                return copy;
+              });
+            }
+          });
+
+          // ✅ Слушаем событие от ChatScreen когда ВЫ отправили сообщение
+          socketConnection.on('message_sent', (message) => {
+            console.log('\n' + '📤'.repeat(30));
+            console.log('📤 ChatsListScreen: message_sent получено');
+            console.log(`   message_id: ${message.id}`);
+            console.log(`   sender_id: ${message.sender_id}`);
+            console.log(`   receiver_id: ${message.receiver_id}`);
+            console.log(`   group_id: ${message.group_id}`);
+            console.log(`   message: ${message.message}`);
+            console.log('📤'.repeat(30) + '\n');
+            
+            if (message.group_id) {
+              // Это групповое сообщение
+              setGroups(prev => {
+                const groupId = message.group_id;
+                const idx = prev.findIndex(g => String(g.id) === String(groupId));
+                
+                if (idx === -1) {
+                  console.log('   ⚠️ Группа не найдена, groupId:', groupId);
+                  return prev;
+                }
+                
+                const item = { ...prev[idx] };
+                item.lastMessage = message.message || '📎 Медиа';
+                item.lastMessageTime = message.created_at || new Date().toISOString();
+                item.lastMessageReadStatus = false; // ⭐ Одна галочка для отправленного
+                item.lastMessageSenderId = message.sender_id;
+                item.lastMessageId = message.id; // ⭐ ДОБАВЛЕНО!
+                
+                console.log('   ✅ Группа обновлена, lastMessage:', item.lastMessage);
                 
                 const copy = [...prev];
                 copy.splice(idx, 1);
@@ -340,13 +516,19 @@ const ChatsListScreen = ({ navigation }) => {
                 const chatId = message.receiver_id;
                 const idx = prev.findIndex(c => String(c.id) === String(chatId));
                 
-                if (idx === -1) return prev;
+                if (idx === -1) {
+                  console.log('   ⚠️ Чат не найден, chatId:', chatId);
+                  return prev;
+                }
                 
                 const item = { ...prev[idx] };
-                item.lastMessage = message.message;
+                item.lastMessage = message.message || '📎 Медиа';
                 item.lastMessageTime = message.created_at || new Date().toISOString();
-                item.lastMessageReadStatus = true; // Наше сообщение сразу прочитано
+                item.lastMessageReadStatus = false; // ⭐ Одна галочка для отправленного
                 item.lastMessageSenderId = message.sender_id;
+                item.lastMessageId = message.id; // ⭐ ДОБАВЛЕНО!
+                
+                console.log('   ✅ Чат обновлён, lastMessage:', item.lastMessage);
                 
                 const copy = [...prev];
                 copy.splice(idx, 1);
@@ -364,61 +546,104 @@ const ChatsListScreen = ({ navigation }) => {
             }
           });
 
-          // 🔴 ОБНОВЛЕНИЕ СТАТУСА ПОЛЬЗОВАТЕЛЯ (по логике ChatScreen)
+          // 🔴 ОБНОВЛЕНИЕ СТАТУСА ПОЛЬЗОВАТЕЛЯ
           socketConnection.on('user_status_changed', (data) => {
-            console.log('🟢 ChatsListScreen: user_status_changed получен', data);
+            console.log('\n' + '🟢'.repeat(30));
+            console.log('🟢 ChatsListScreen: user_status_changed получен');
+            console.log('   Данные:', JSON.stringify(data));
+            console.log('🟢'.repeat(30) + '\n');
             
-            // 1️⃣ Извлекаем userId (как в ChatScreen)
-            const extractUserId = (payload) => {
-              if (payload === undefined || payload === null) return undefined;
-              if (typeof payload === 'object') {
-                return payload.userId ?? payload.user_id ?? payload.id;
-              }
-              return payload;
-            };
+            // Извлекаем данные из разных форматов
+            let targetUserId = data?.userId ?? data?.user_id ?? data?.id;
+            let isOnline = undefined;
             
-            // 2️⃣ Извлекаем is_online значение (как в ChatScreen)
-            const resolveStatus = (payload) => {
-              if (payload && typeof payload === 'object') {
-                if (typeof payload.is_online === 'boolean') return payload.is_online;
-                if (typeof payload.online === 'boolean') return payload.online;
-                if (typeof payload.status === 'string') {
-                  const normalized = payload.status.trim().toLowerCase();
-                  if (['online', 'в сети', 'on', '1'].includes(normalized)) return true;
-                  if (['offline', 'оффлайн', 'off', '0', 'не в сети'].includes(normalized)) return false;
-                }
-              }
-              return undefined;
-            };
+            // Определяем статус
+            if (typeof data?.is_online === 'boolean') {
+              isOnline = data.is_online;
+            } else if (typeof data?.online === 'boolean') {
+              isOnline = data.online;
+            } else if (typeof data?.status === 'string') {
+              const s = data.status.toLowerCase();
+              isOnline = ['online', 'в сети', 'on', '1'].includes(s);
+            }
             
-            const userId = extractUserId(data);
-            const is_online = resolveStatus(data);
+            console.log(`   Извлечено: targetUserId=${targetUserId}, isOnline=${isOnline}`);
             
-            console.log(`   Извлечено: userId=${userId}, is_online=${is_online}`);
-            
-            if (userId === undefined || is_online === undefined) {
+            if (targetUserId === undefined || isOnline === undefined) {
               console.log(`   ⚠️ Не удалось извлечь данные из события`);
               return;
             }
             
-            // 3️⃣ Обновляем статус в личных чатах
+            // ⭐ КРИТИЧНО: Проверяем что это НЕ мы сами
+            const myId = currentUserRef.current?.id;
+            if (String(targetUserId) === String(myId)) {
+              console.log(`   ⏭️ Это наш собственный статус, пропускаем`);
+              return;
+            }
+            
+            // ✅ Обновляем статус в чатах
             setChats(prev => {
-              const idx = prev.findIndex(c => String(c.id) === String(userId));
+              const idx = prev.findIndex(c => String(c.id) === String(targetUserId));
               if (idx === -1) {
-                console.log(`   ⚠️ Чат с id=${userId} не найден в массиве чатов`);
+                console.log(`   ⚠️ Чат с id=${targetUserId} не найден`);
                 return prev;
               }
               
-              console.log(`   ✅ Чат найден! Обновляю is_online=${is_online}`);
+              // Проверяем что статус реально изменился
+              const currentStatus = prev[idx].is_online;
+              if (currentStatus === isOnline) {
+                console.log(`   ⏭️ Статус не изменился (${currentStatus}), пропускаем`);
+                return prev;
+              }
               
-              const updatedChats = [...prev];
-              updatedChats[idx] = {
-                ...updatedChats[idx],
-                is_online: is_online
-              };
+              console.log(`   ✅ Обновляю статус чата ${targetUserId}: ${currentStatus} → ${isOnline}`);
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], is_online: isOnline };
+              return updated;
+            });
+          });
+
+          // ✅ user_online
+          socketConnection.on('user_online', (data) => {
+            const targetUserId = data?.userId ?? data?.user_id ?? data?.id;
+            if (!targetUserId) return;
+            
+            const myId = currentUserRef.current?.id;
+            if (String(targetUserId) === String(myId)) return;
+            
+            console.log('🟢 user_online:', targetUserId);
+            
+            setChats(prev => {
+              const idx = prev.findIndex(c => String(c.id) === String(targetUserId));
+              if (idx === -1) return prev;
+              if (prev[idx].is_online === true) return prev;
               
-              console.log(`   📊 Новое состояние чата: is_online=${updatedChats[idx].is_online}`);
-              return updatedChats;
+              console.log(`   ✅ Чат ${targetUserId}: онлайн`);
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], is_online: true };
+              return updated;
+            });
+          });
+
+          // ✅ user_offline
+          socketConnection.on('user_offline', (data) => {
+            const targetUserId = data?.userId ?? data?.user_id ?? data?.id;
+            if (!targetUserId) return;
+            
+            const myId = currentUserRef.current?.id;
+            if (String(targetUserId) === String(myId)) return;
+            
+            console.log('🔴 user_offline:', targetUserId);
+            
+            setChats(prev => {
+              const idx = prev.findIndex(c => String(c.id) === String(targetUserId));
+              if (idx === -1) return prev;
+              if (prev[idx].is_online === false) return prev;
+              
+              console.log(`   ✅ Чат ${targetUserId}: офлайн`);
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], is_online: false };
+              return updated;
             });
           });
 
@@ -446,7 +671,9 @@ const ChatsListScreen = ({ navigation }) => {
             const { group_id, user_id } = data;
             
             // Если это текущий пользователь - удаляем группу из списка
-            if (user_id === currentUser?.id) {
+            // ⭐ Используем ref
+            const myId = currentUserRef.current?.id;
+            if (user_id === myId) {
               setGroups(prev => prev.filter(g => String(g.id) !== String(group_id)));
             }
           });
@@ -459,55 +686,142 @@ const ChatsListScreen = ({ navigation }) => {
 
           // 🔴 ОБНОВЛЕНИЕ КОГДА ЧТЕНИЕ ОТМЕТИЛИ
           socketConnection.on('message_read_status_updated', (data) => {
-            console.log('ChatsListScreen: Статус прочтения обновлен', data);
-            const { message_id, is_read, read_by, sender_id, receiver_id, group_id } = data;
+            console.log('\n' + '✓✓'.repeat(30));
+            console.log('📨 ChatsListScreen: message_read_status_updated');
+            console.log('   Данные:', JSON.stringify(data));
+            console.log('✓✓'.repeat(30) + '\n');
             
-            console.log(`\n📨 Read status update:`);
-            console.log(`   message_id: ${message_id}`);
-            console.log(`   is_read: ${is_read}`);
-            console.log(`   sender_id: ${sender_id}`);
-            console.log(`   receiver_id: ${receiver_id}`);
-            console.log(`   group_id: ${group_id}`);
+            const { message_id, is_read, sender_id, receiver_id, group_id, reader_id, chat_id, read_by } = data;
             
-            // Если это групповое сообщение - обновляем группу
+            // ⭐ КРИТИЧНО: Используем ref для актуального user id
+            const myId = currentUserRef.current?.id;
+            
+            // Преобразуем is_read в boolean
+            const isReadBool = is_read === true || is_read === 1 || is_read === '1';
+            
+            console.log(`   🔍 АНАЛИЗ:`);
+            console.log(`      myId: ${myId}`);
+            console.log(`      sender_id: ${sender_id}`);
+            console.log(`      receiver_id: ${receiver_id}`);
+            console.log(`      reader_id: ${reader_id}`);
+            console.log(`      read_by: ${read_by}`);
+            console.log(`      chat_id: ${chat_id}`);
+            console.log(`      message_id: ${message_id}`);
+            console.log(`      is_read: ${is_read} (bool: ${isReadBool})`);
+            console.log(`      group_id: ${group_id}`);
+            
+            if (!isReadBool) {
+              console.log('   ⏭️ is_read не true, пропускаем');
+              return;
+            }
+            
+            // ⭐ КРИТИЧНО: Обновляем галочку если:
+            // Это НАШЕ сообщение (sender_id === myId) и его ПРОЧИТАЛИ
+            
             if (group_id) {
-              console.log(`   ➡️ Это групповое сообщение`);
+              // Групповой чат
               setGroups(prev => {
-                const updated = prev.map(group => {
-                  const isSameGroup = String(group.id) === String(group_id);
-                  const isSameMessage = message_id && String(group.lastMessageId) === String(message_id);
+                console.log(`   📋 Текущие группы:`, prev.map(g => ({ id: g.id, name: g.name, lastMessageReadStatus: g.lastMessageReadStatus })));
+                
+                return prev.map(group => {
+                  if (String(group.id) !== String(group_id)) return group;
                   
-                  console.log(`   Проверяю группу ${group.id}: isSameGroup=${isSameGroup}, isSameMessage=${isSameMessage}`);
-                  
-                  if (isSameGroup && isSameMessage) {
-                    console.log(`   ✅ Обновляю группу ${group_id}: lastMessageReadStatus → ${is_read}`);
-                    return { ...group, lastMessageReadStatus: is_read };
+                  // Проверяем что это наше сообщение
+                  if (String(sender_id) !== String(myId)) {
+                    console.log(`   ⏭️ Не наше сообщение в группе ${group_id} (sender=${sender_id}, myId=${myId})`);
+                    return group;
                   }
-                  return group;
-                });
-                return updated;
-              });
-            } else if (message_id) {
-              // Для личных чатов: проверяем что это сообщение от текущего пользователя (sender_id)
-              // и оно предназначено для конкретного chat_id (receiver_id)
-              console.log(`   ➡️ Это личное сообщение`);
-              setChats(prev => {
-                const updated = prev.map(chat => {
-                  const isSameChat = String(chat.id) === String(receiver_id);
-                  const isSameMessage = String(chat.lastMessageId) === String(message_id);
                   
-                  console.log(`   Проверяю чат ${chat.id}: isSameChat=${isSameChat}, isSameMessage=${isSameMessage}, receiver_id=${receiver_id}`);
+                  // ⭐ ИСПРАВЛЕНО: НЕ проверяем lastMessageId - обновляем статус последнего сообщения в любом случае
+                  // Потому что если прочитали любое наше сообщение - значит прочитали и последнее
                   
-                  if (isSameChat && isSameMessage) {
-                    console.log(`   ✅ Обновляю чат ${chat.id}: lastMessageReadStatus → ${is_read}`);
-                    return { ...chat, lastMessageReadStatus: is_read };
-                  }
-                  return chat;
+                  console.log(`   ✅ Группа ${group_id}: две галочки ✓✓`);
+                  return { ...group, lastMessageReadStatus: true };
                 });
-                return updated;
               });
             } else {
-              console.log(`   ❌ Ни группа ни message_id, игнорируем`);
+              // Личный чат
+              setChats(prev => {
+                console.log(`   📋 Текущие чаты:`, prev.map(c => ({ id: c.id, username: c.username, lastMessageReadStatus: c.lastMessageReadStatus, lastMessageSenderId: c.lastMessageSenderId })));
+                
+                // ⭐ ИСПРАВЛЕНО: Определяем chatId - с кем чат, в котором прочитали сообщение
+                // Если я отправитель - чат с receiver_id (или reader_id)
+                // Если читатель не я - значит это наше сообщение и его прочитали
+                
+                const actualReaderId = reader_id || read_by;
+                const isMyMessage = String(sender_id) === String(myId);
+                
+                console.log(`   🔍 isMyMessage: ${isMyMessage}, actualReaderId: ${actualReaderId}`);
+                
+                if (!isMyMessage) {
+                  console.log(`   ⏭️ Это НЕ наше сообщение (sender_id=${sender_id}, myId=${myId}), пропускаем`);
+                  return prev;
+                }
+                
+                // Это наше сообщение - его кто-то прочитал
+                // Чат находится с получателем (receiver_id) или с тем кто прочитал
+                const targetChatId = receiver_id || actualReaderId || chat_id;
+                
+                console.log(`   🎯 Ищем чат с ID: ${targetChatId}`);
+                
+                return prev.map(chat => {
+                  // Пробуем найти чат по разным ID
+                  const chatMatches = 
+                    String(chat.id) === String(targetChatId) ||
+                    String(chat.id) === String(receiver_id) ||
+                    String(chat.id) === String(actualReaderId) ||
+                    String(chat.id) === String(chat_id);
+                  
+                  if (!chatMatches) {
+                    return chat;
+                  }
+                  
+                  // ⭐ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся что lastMessageSenderId === myId
+                  // Чтобы не обновлять галочку если последнее сообщение не наше
+                  if (chat.lastMessageSenderId && String(chat.lastMessageSenderId) !== String(myId)) {
+                    console.log(`   ⏭️ Последнее сообщение в чате ${chat.id} не наше (lastMessageSenderId=${chat.lastMessageSenderId})`);
+                    return chat;
+                  }
+                  
+                  console.log(`   ✅ Чат ${chat.id} (${chat.username}): две галочки ✓✓`);
+                  return { ...chat, lastMessageReadStatus: true };
+                });
+              });
+            }
+          });
+
+          // 🔴 ДОПОЛНИТЕЛЬНЫЙ ОБРАБОТЧИК: messages_read (пакетное прочтение)
+          socketConnection.on('messages_read', (data) => {
+            console.log('\n' + '✓✓'.repeat(30));
+            console.log('📨 ChatsListScreen: messages_read (пакетное)');
+            console.log('   Данные:', JSON.stringify(data));
+            console.log('✓✓'.repeat(30) + '\n');
+            
+            const { reader_id, chat_id, chat_type, sender_id } = data;
+            const myId = currentUserRef.current?.id;
+            
+            // Если читатель - это мы сами, пропускаем (нам не нужно обновлять галочки для своих сообщений)
+            if (String(reader_id) === String(myId)) {
+              console.log('   ⏭️ Читатель - мы сами, пропускаем');
+              return;
+            }
+            
+            // Если sender_id указан и это мы - обновляем галочки
+            if (sender_id && String(sender_id) === String(myId)) {
+              if (chat_type === 'group') {
+                setGroups(prev => prev.map(group => {
+                  if (String(group.id) !== String(chat_id)) return group;
+                  console.log(`   ✅ Группа ${chat_id}: две галочки ✓✓ (messages_read)`);
+                  return { ...group, lastMessageReadStatus: true };
+                }));
+              } else {
+                // Для личного чата - chat_id это ID собеседника
+                setChats(prev => prev.map(chat => {
+                  if (String(chat.id) !== String(chat_id)) return chat;
+                  console.log(`   ✅ Чат ${chat_id}: две галочки ✓✓ (messages_read)`);
+                  return { ...chat, lastMessageReadStatus: true };
+                }));
+              }
             }
           });
 
@@ -521,8 +835,10 @@ const ChatsListScreen = ({ navigation }) => {
           // ✅ ОБНОВЛЕНИЕ ПРОФИЛЯ ПОЛЬЗОВАТЕЛЯ
           socketConnection.on('profile_updated', (data) => {
             console.log('ChatsListScreen: Профиль обновлен', data);
-            if (data && currentUser && String(data.id) === String(currentUser.id)) {
-              const updatedUser = { ...currentUser, ...data };
+            // ⭐ Используем ref
+            const myId = currentUserRef.current?.id;
+            if (data && myId && String(data.id) === String(myId)) {
+              const updatedUser = { ...currentUserRef.current, ...data };
               setCurrentUser(updatedUser);
               AsyncStorage.setItem('user', JSON.stringify(updatedUser)).catch(err => 
                 console.log('Ошибка сохранения обновленного пользователя в AsyncStorage:', err)
@@ -570,12 +886,14 @@ const ChatsListScreen = ({ navigation }) => {
             console.log('🆕 ChatsListScreen: Получено событие group_created', groupData);
             
             // Проверяем что текущий пользователь в списке участников
+            // ⭐ КРИТИЧНО: Используем ref
+            const myId = currentUserRef.current?.id;
             const isMember = groupData.members && (
-              groupData.members.includes(currentUser?.id) ||
-              groupData.members.some(m => String(m.id) === String(currentUser?.id) || String(m) === String(currentUser?.id))
+              groupData.members.includes(myId) ||
+              groupData.members.some(m => String(m.id) === String(myId) || String(m) === String(myId))
             );
             
-            console.log(`   Member check: isMember=${isMember}, members=${groupData.members}, currentUserId=${currentUser?.id}`);
+            console.log(`   Member check: isMember=${isMember}, members=${groupData.members}, myId=${myId}`);
             
             if (isMember) {
               console.log(`   ✅ Добавляю группу ${groupData.id} в список`);
@@ -587,7 +905,7 @@ const ChatsListScreen = ({ navigation }) => {
                 lastMessage: '',
                 lastMessageId: null,
                 lastMessageTime: new Date().toISOString(),
-                lastMessageSenderId: currentUser?.id,
+                lastMessageSenderId: myId,
                 lastMessageReadStatus: false,
                 unreadCount: 0,
                 isGroup: true,
@@ -596,91 +914,289 @@ const ChatsListScreen = ({ navigation }) => {
               setGroups(prev => [newGroup, ...prev]);
             }
           });
-      } catch (error) {
-        console.error('Ошибка подключения Socket.io в ChatsListScreen:', error);
-      }
 
-      // ✅ СЛУШАТЕЛИ ДЛЯ СТАТУСА ПЕЧАТАНИЯ - Присоединяем к существующему socket
-      const socketConnection = socketConnectionRef.current;
-      if (socketConnection) {
-        // Для личных чатов
-        socketConnection.on('user_typing', (data) => {
-          console.log('📝 ChatsListScreen: user_typing получено', data);
-          const { from_user_id, from_user_username, to_user_id, is_typing } = data;
-          
-          // ✅ КРИТИЧНО: Используем from_user_id как ключ чата
-          // from_user_id = ID того кто печатает = ID чата для рендеринга
-          if (is_typing) {
-            setTypingUsers(prev => ({
-              ...prev,
-              [from_user_id]: {
-                userId: from_user_id,
-                username: from_user_username,
-                timestamp: Date.now()
-              }
-            }));
-            console.log(`✅ ${from_user_username}(${from_user_id}) печатает - сохранено в typingUsers[${from_user_id}]`);
-          } else {
-            // Удаляем из списка если is_typing = false
-            setTypingUsers(prev => {
-              const updated = { ...prev };
-              delete updated[from_user_id];
-              return updated;
-            });
-            console.log(`⏹️ ${from_user_username}(${from_user_id}) перестал печатать`);
-          }
-        });
-        
-        // Для групповых чатов
-        socketConnection.on('group_user_typing', (data) => {
-          console.log('ChatsListScreen: Пользователь печатает в группе', data);
-          const { group_id, user_id, username, is_typing } = data;
-          
-          setGroupTypingUsers(prev => {
-            const updated = { ...prev };
-            
-            if (!updated[group_id]) {
-              updated[group_id] = [];
-            }
-            
-            const existingIndex = updated[group_id].findIndex(u => u.userId === user_id);
+          // ✅ СЛУШАТЕЛИ ДЛЯ СТАТУСА ПЕЧАТАНИЯ - ВНУТРИ try-catch
+          // Для личных чатов
+          socketConnection.on('user_typing', (data) => {
+            console.log('📝 ChatsListScreen: user_typing получено', data);
+            const { from_user_id, from_user_username, to_user_id, is_typing } = data;
             
             if (is_typing) {
-              if (existingIndex !== -1) {
-                // Обновляем timestamp
-                updated[group_id][existingIndex].timestamp = Date.now();
-              } else {
-                // Добавляем нового пользователя
-                updated[group_id].push({
-                  userId: user_id,
-                  username: username,
+              setTypingUsers(prev => ({
+                ...prev,
+                [from_user_id]: {
+                  userId: from_user_id,
+                  username: from_user_username,
                   timestamp: Date.now()
-                });
-                console.log(`✅ ${username} начал печатать в группе ${group_id}`);
-              }
+                }
+              }));
+              console.log(`✅ ${from_user_username}(${from_user_id}) печатает`);
             } else {
-              // Удаляем пользователя из печатающих
-              if (existingIndex !== -1) {
-                updated[group_id].splice(existingIndex, 1);
-                console.log(`⏹️ ${username} перестал печатать в группе ${group_id}`);
-              }
-              // Если в группе больше никто не печатает, удаляем группу из словаря
-              if (updated[group_id].length === 0) {
-                delete updated[group_id];
-              }
+              setTypingUsers(prev => {
+                const updated = { ...prev };
+                delete updated[from_user_id];
+                return updated;
+              });
+              console.log(`⏹️ ${from_user_username}(${from_user_id}) перестал печатать`);
             }
-            
-            return updated;
           });
-        });
+          
+          // Для групповых чатов
+          socketConnection.on('group_user_typing', (data) => {
+            console.log('📝 ChatsListScreen: group_user_typing получено', data);
+            const { group_id, user_id, username, is_typing } = data;
+            
+            setGroupTypingUsers(prev => {
+              const updated = { ...prev };
+              
+              if (!updated[group_id]) {
+                updated[group_id] = [];
+              }
+              
+              const existingIndex = updated[group_id].findIndex(u => u.userId === user_id);
+              
+              if (is_typing) {
+                if (existingIndex !== -1) {
+                  updated[group_id][existingIndex].timestamp = Date.now();
+                } else {
+                  updated[group_id].push({
+                    userId: user_id,
+                    username: username,
+                    timestamp: Date.now()
+                  });
+                  console.log(`✅ ${username} начал печатать в группе ${group_id}`);
+                }
+              } else {
+                if (existingIndex !== -1) {
+                  updated[group_id].splice(existingIndex, 1);
+                  console.log(`⏹️ ${username} перестал печатать в группе ${group_id}`);
+                }
+                if (updated[group_id].length === 0) {
+                  delete updated[group_id];
+                }
+              }
+              
+              return updated;
+            });
+          });
+
+          // ✅ НОВОЕ: Обработка reconnect событий
+          socketConnection.on('reconnect', (attemptNumber) => {
+            console.log('🔄 Socket переподключился после', attemptNumber, 'попыток');
+            setIsConnected(true);
+            
+            // Переподключаемся к комнатам
+            if (user && user.id) {
+              socketConnection.emit('authenticate_socket', { user_id: user.id });
+              socketConnection.emit('join_personal_room', user.id);
+              console.log('✅ Переподключились к личной комнате user_' + user.id);
+            }
+          });
+
+          socketConnection.on('reconnect_attempt', (attemptNumber) => {
+            console.log('🔄 Попытка переподключения #' + attemptNumber);
+          });
+
+          socketConnection.on('reconnect_error', (error) => {
+            console.error('❌ Ошибка переподключения:', error.message);
+          });
+
+      } catch (error) {
+        console.error('Ошибка подключения Socket.io в ChatsListScreen:', error);
       }
     })();
 
     return () => {
       unsub && unsub();
-      if (socketConnection) {
-        socketConnection.disconnect();
+      
+      // ✅ ИСПРАВЛЕНО: Используем ref вместо локальной переменной
+      const socket = socketConnectionRef.current;
+      if (socket) {
+        // Отписываемся от всех событий
+        socket.off('connect');
+        socket.off('disconnect');
+        socket.off('new_message');
+        socket.off('new_message_local'); // ⭐ ДОБАВЛЕНО
+        socket.off('new_group_message');
+        socket.off('message_sent');
+        socket.off('user_status_changed');
+        socket.off('user_online');
+        socket.off('user_offline');
+        socket.off('group_avatar_updated');
+        socket.off('user_left_group');
+        socket.off('message_read_status_updated');
+        socket.off('chat_cleared');
+        socket.off('profile_updated');
+        socket.off('chat_unread_count_updated');
+        socket.off('group_created');
+        socket.off('user_typing');
+        socket.off('group_user_typing');
+        socket.off('reconnect');
+        socket.off('reconnect_attempt');
+        socket.off('reconnect_error');
+        
+        console.log('✅ ChatsListScreen: Отписались от всех socket событий');
+        // НЕ делаем disconnect() - это глобальный socket!
       }
+      socketConnectionRef.current = null;
+    };
+  }, []);
+
+  // ⭐ ПОДПИСКА НА ЛОКАЛЬНЫЕ СОБЫТИЯ ПРИЛОЖЕНИЯ (AppEvents)
+  // Это критично для обновления lastMessage когда пользователь сам отправляет сообщение
+  useEffect(() => {
+    console.log('🔔 ChatsListScreen: Подписываемся на AppEvents');
+    
+    // Обработчик отправленного личного сообщения
+    const handleMessageSent = (message) => {
+      console.log('\n' + '🚀'.repeat(30));
+      console.log('🚀 ChatsListScreen: AppEvents MESSAGE_SENT получено!');
+      console.log('   message.id:', message.id);
+      console.log('   message.sender_id:', message.sender_id);
+      console.log('   message.receiver_id:', message.receiver_id);
+      console.log('   message.message:', message.message?.substring(0, 50));
+      console.log('   currentUserRef.current?.id:', currentUserRef.current?.id);
+      console.log('🚀'.repeat(30) + '\n');
+      
+      const myId = currentUserRef.current?.id;
+      if (!myId) {
+        console.log('⚠️ AppEvents: myId отсутствует!');
+        return;
+      }
+      
+      setChats(prev => {
+        console.log('   📋 Текущие чаты (AppEvents):', prev.map(c => ({ id: c.id, lastMessage: c.lastMessage?.substring(0, 20) })));
+        
+        // Определяем ID чата - для отправленного сообщения это receiver_id
+        const chatId = message.receiver_id;
+        
+        console.log(`   🔍 Ищем чат с ID: ${chatId}`);
+        
+        const idx = prev.findIndex(c => String(c.id) === String(chatId));
+        
+        if (idx === -1) {
+          console.log('   ⚠️ Чат НЕ НАЙДЕН! chatId:', chatId, 'Доступные ID:', prev.map(c => c.id));
+          return prev;
+        }
+        
+        console.log('   ✅ Чат НАЙДЕН на индексе:', idx);
+        
+        const item = { ...prev[idx] };
+        
+        // Обновляем последнее сообщение
+        item.lastMessage = message.message || '📎 Медиа';
+        item.lastMessageTime = message.created_at || new Date().toISOString();
+        item.lastMessageId = message.id;
+        item.lastMessageSenderId = message.sender_id;
+        item.lastMessageReadStatus = false; // Моё сообщение - одна галочка
+        
+        console.log('   📝 Обновленный lastMessage:', item.lastMessage);
+        
+        const copy = [...prev];
+        copy.splice(idx, 1);
+        
+        // Сортировка - поднимаем чат вверх (но не выше закреплённых)
+        if (item.pinned) {
+          copy.splice(idx, 0, item);
+        } else {
+          const pinnedCount = copy.filter(c => c.pinned).length;
+          copy.splice(pinnedCount, 0, item);
+        }
+        
+        console.log('   ✅ Чат обновлён через AppEvents!');
+        return copy;
+      });
+    };
+    
+    // Обработчик отправленного группового сообщения
+    const handleGroupMessageSent = (message) => {
+      console.log('\n' + '🚀'.repeat(30));
+      console.log('🚀 ChatsListScreen: AppEvents GROUP_MESSAGE_SENT получено!');
+      console.log('   message.group_id:', message.group_id);
+      console.log('🚀'.repeat(30) + '\n');
+      
+      setGroups(prev => {
+        const groupId = message.group_id;
+        const idx = prev.findIndex(g => String(g.id) === String(groupId));
+        
+        if (idx === -1) {
+          console.log('   ⚠️ Группа не найдена:', groupId);
+          return prev;
+        }
+        
+        const item = { ...prev[idx] };
+        item.lastMessage = message.message || '📎 Медиа';
+        item.lastMessageTime = message.created_at || new Date().toISOString();
+        item.lastMessageId = message.id;
+        item.lastMessageSenderId = message.sender_id;
+        item.lastMessageReadStatus = false;
+        
+        const copy = [...prev];
+        copy.splice(idx, 1);
+        
+        if (item.pinned) {
+          copy.splice(idx, 0, item);
+        } else {
+          const pinnedCount = copy.filter(c => c.pinned).length;
+          copy.splice(pinnedCount, 0, item);
+        }
+        
+        console.log('   ✅ Группа обновлена через AppEvents!');
+        return copy;
+      });
+    };
+    
+    // Обработчик события прочтения сообщения (для галочек ✓✓)
+    const handleMessageRead = (data) => {
+      console.log('\n' + '✓✓'.repeat(30));
+      console.log('✓✓ ChatsListScreen: AppEvents MESSAGE_READ получено!');
+      console.log('   Данные:', JSON.stringify(data));
+      console.log('✓✓'.repeat(30) + '\n');
+      
+      const { message_id, sender_id, receiver_id, group_id, is_read } = data;
+      
+      const myId = currentUserRef.current?.id;
+      if (!myId) {
+        console.log('   ⚠️ myId отсутствует!');
+        return;
+      }
+      
+      // ⭐ Обновляем галочку только если это НАШЕ сообщение (sender_id === myId)
+      // и его прочитали
+      if (String(sender_id) !== String(myId)) {
+        console.log('   ⏭️ Это не наше сообщение, пропускаем');
+        return;
+      }
+      
+      if (group_id) {
+        // Групповой чат
+        setGroups(prev => prev.map(group => {
+          if (String(group.id) !== String(group_id)) return group;
+          
+          console.log(`   ✅ Группа ${group_id}: две галочки ✓✓`);
+          return { ...group, lastMessageReadStatus: true };
+        }));
+      } else {
+        // Личный чат - ищем чат с receiver_id
+        setChats(prev => prev.map(chat => {
+          if (String(chat.id) !== String(receiver_id)) return chat;
+          
+          console.log(`   ✅ Чат ${chat.id}: две галочки ✓✓`);
+          return { ...chat, lastMessageReadStatus: true };
+        }));
+      }
+    };
+    
+    // Подписываемся
+    const unsubMessageSent = onMessageSent(handleMessageSent);
+    const unsubGroupMessageSent = onGroupMessageSent(handleGroupMessageSent);
+    const unsubMessageRead = onMessageRead(handleMessageRead);
+    
+    return () => {
+      console.log('🔕 ChatsListScreen: Отписываемся от AppEvents');
+      unsubMessageSent();
+      unsubGroupMessageSent();
+      unsubMessageRead();
     };
   }, []);
 
@@ -722,19 +1238,18 @@ const ChatsListScreen = ({ navigation }) => {
   // ✅ Очищаем активный чат при фокусе на этот экран
   useFocusEffect(
     React.useCallback(() => {
-      console.log('📱 ChatsListScreen: Вернулись на экран - перезагружаем чаты и статусы');
+      console.log('📱 ChatsListScreen: Вернулись на экран');
       setActiveChatId(null);
       
-      // ✅ Перезагружаем чаты и группы при возврате на экран
-      // Это нужно, чтобы обновились галочки (is_read) после прочтения сообщений
-      if (pinnedMap) {
-        loadChats(pinnedMap);
-        loadGroups(pinnedMap);
-      } else {
-        loadChats();
-        loadGroups();
-      }
-    }, [pinnedMap])
+      // ⚡ НЕ перезагружаем полностью!
+      // Socket события уже обновляют данные в реальном времени:
+      // - new_message
+      // - message_read_status_updated
+      // - user_status_changed
+      // Полная загрузка происходит только:
+      // 1. При первом монтировании компонента (useEffect)
+      // 2. При pull-to-refresh (RefreshControl)
+    }, [])  // ← Пустые зависимости - без перезагрузки!
   );
 
   // ✅ Присоединяемся к комнатам групп когда они загружены
@@ -817,7 +1332,8 @@ const ChatsListScreen = ({ navigation }) => {
                 lastMessageTime: lastMsg.created_at || lastMsg.createdAt,
                 lastMessageId: lastMsg.id,
                 lastMessageSenderId: lastMsg.sender_id,
-                lastMessageReadStatus: lastMsg.sender_id === currentUserId ? false : (lastMsg.is_read || false),
+                // ⭐ ИСПРАВЛЕНО: Показываем реальный статус прочтения
+                lastMessageReadStatus: lastMsg.is_read === true || lastMsg.is_read === 1,
                 unreadCount: unreadCount,
               };
             }
@@ -941,7 +1457,8 @@ const ChatsListScreen = ({ navigation }) => {
                 lastMessageTime: lastMsg.created_at || lastMsg.createdAt,
                 lastMessageId: lastMsg.id,
                 lastMessageSenderId: lastMsg.sender_id,
-                lastMessageReadStatus: lastMsg.sender_id === currentUserId ? false : (lastMsg.is_read || false),
+                // ⭐ ИСПРАВЛЕНО: Показываем реальный статус прочтения
+                lastMessageReadStatus: lastMsg.is_read === true || lastMsg.is_read === 1,
                 unreadCount: unreadCount,
               };
             }

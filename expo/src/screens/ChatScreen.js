@@ -27,6 +27,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import { Video } from 'expo-av';
 import { getOrCreateSocket } from '../services/globalSocket';
+import { emitMessageSent, emitGroupMessageSent, emitMessageRead } from '../services/appEvents';
 import { messageAPI, mediaAPI, groupAPI, pinnedAPI, userAPI, friendAPI, callAPI, profileAPI } from '../services/api';
 import { showNotificationIfEnabled, NotificationTemplates, NotificationSettings, setActiveChatContext, clearActiveChatContext } from '../services/notifications';
 import { GestureHandlerRootView, PanGestureHandler as RNGHPanGestureHandler } from 'react-native-gesture-handler';
@@ -1013,11 +1014,12 @@ const ChatScreen = ({ route, navigation }) => {
 
           let isForThisChat = false;
           if (isGroup) {
-            isForThisChat = message.group_id === user.id;
+            // ✅ ИСПРАВЛЕНО: Приводим к числу для корректного сравнения
+            isForThisChat = Number(message.group_id) === Number(user.id);
           } else {
             isForThisChat =
-              (message.sender_id === user.id && message.receiver_id === currentUser.id) ||
-              (message.sender_id === currentUser.id && message.receiver_id === user.id);
+              (Number(message.sender_id) === Number(user.id) && Number(message.receiver_id) === Number(currentUser.id)) ||
+              (Number(message.sender_id) === Number(currentUser.id) && Number(message.receiver_id) === Number(user.id));
           }
 
           if (isForThisChat) {
@@ -2155,6 +2157,18 @@ const ChatScreen = ({ route, navigation }) => {
       
       return newMessages;
     });
+    
+    // ⭐ КРИТИЧНО: Эмитим локальное событие для ChatsListScreen
+    // чтобы обновить галочки (✓ → ✓✓) в списке чатов
+    emitMessageRead({
+      message_id,
+      is_read: true,
+      sender_id,
+      receiver_id,
+      group_id,
+      reader_id,
+      chat_id
+    });
   };
 
   const sendMessage = async (mediaData = null, captionText = null) => {
@@ -2243,16 +2257,30 @@ const ChatScreen = ({ route, navigation }) => {
         return msg;
       }));
 
-      // ✅ Отправляем событие на сокет чтобы ChatsListScreen обновился
+      // ✅ Отправляем событие на сокет чтобы сервер обновил получателя
+      // И эмитим событие локально для НЕМЕДЛЕННОГО обновления ChatsListScreen
+      const sentMessageData = {
+        id: response.data?.id,
+        sender_id: currentUser?.id,
+        receiver_id: isGroup ? null : user.id,
+        group_id: isGroup ? user.id : null,
+        message: messageText,
+        created_at: response.data?.created_at || new Date().toISOString(),
+        is_read: response.data?.is_read || false,
+      };
+      
       if (socket && socket.connected) {
-        socket.emit('message_sent', {
-          sender_id: currentUser?.id,
-          receiver_id: isGroup ? null : user.id,
-          group_id: isGroup ? user.id : null,
-          message: messageText,
-          created_at: response.data?.created_at,
-          is_read: response.data?.is_read,
-        });
+        console.log('📤 ChatScreen: Отправляем message_sent на сервер', sentMessageData);
+        socket.emit('message_sent', sentMessageData);
+      }
+      
+      // ⭐ КРИТИЧНО: Эмитим локальное событие через AppEvents
+      // Это гарантированно обновит ChatsListScreen
+      console.log('📤 ChatScreen: Вызываем AppEvents для обновления ChatsListScreen');
+      if (isGroup) {
+        emitGroupMessageSent(sentMessageData);
+      } else {
+        emitMessageSent(sentMessageData);
       }
       
     } catch (error) {
