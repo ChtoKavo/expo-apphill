@@ -332,7 +332,7 @@ export const adminAPI = {
 };
 
 export const mediaAPI = {
-  uploadMedia: async (uriOrFormData, type = null) => {
+  uploadMedia: async (uriOrFormData, type = null, onProgress = null) => {
     const token = await AsyncStorage.getItem('token');
     
     let formData;
@@ -353,6 +353,8 @@ export const mediaAPI = {
         mediaType = 'image/jpeg';
       }
       
+      console.log(`📤 uploadMedia: uri=${uriOrFormData?.slice(-50)}, type=${type}`);
+      
       formData.append('media', {
         uri: uriOrFormData,
         type: mediaType,
@@ -365,7 +367,8 @@ export const mediaAPI = {
         'Content-Type': 'multipart/form-data',
         'Authorization': `Bearer ${token}`,
       },
-      timeout: 60000,
+      timeout: 120000, // 2 минуты для больших видео
+      onUploadProgress: onProgress,
     });
   },
 };

@@ -19,6 +19,7 @@ import {
   ScrollView,
   Switch,
   Share,
+  Alert,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -43,6 +44,12 @@ import { audioRecorder } from '../services/audioRecorder';
 import TypingIndicator from '../components/TypingIndicator';
 import MessageCheckmark from '../components/MessageCheckmark';
 import { normalizeMediaUrl, normalizeMessageMediaUrl } from '../services/urlUtils';
+import VideoCirclePlayer from '../components/VideoCirclePlayer';
+import VideoCircleRecorder from '../components/VideoCircleRecorder';
+import CachedImage from '../components/CachedImage';
+import CachedVideo from '../components/CachedVideo';
+import { preloadVideos, cleanOldCache, preloadMediaList, cacheLocalFile } from '../services/mediaCache';
+import { saveChatMessages, loadChatMessages, addMessageToCache, updateMessageInCache, deleteMessageFromCache, cleanOldMessageCache } from '../services/messageCache';
 
 const ChatScreen = ({ route, navigation }) => {
   const { theme, isDark } = useTheme();
@@ -121,7 +128,13 @@ const ChatScreen = ({ route, navigation }) => {
     }
   }, [user, navigation, routeParams]);
 
-  // 🆕 НОВОЕ: Обработка focusInput из уведомления
+  // � Очистка старого кэша видеокружков при монтировании
+  useEffect(() => {
+    cleanOldCache(); // Очистка медиа-кэша
+    cleanOldMessageCache(); // Очистка кэша сообщений
+  }, []);
+
+  // �🆕 НОВОЕ: Обработка focusInput из уведомления
   useEffect(() => {
     const { focusInput } = routeParams;
     if (focusInput && newMessageInputRef.current) {
@@ -268,6 +281,10 @@ const ChatScreen = ({ route, navigation }) => {
   
   // 🎥 ОШИБКИ ЗАГРУЗКИ ВИДЕО
   const [videoLoadErrors, setVideoLoadErrors] = useState({});
+  
+  // 🎬 ВИДЕОКРУЖКИ
+  const [videoCircleRecorderVisible, setVideoCircleRecorderVisible] = useState(false);
+  const [activeVideoCircleId, setActiveVideoCircleId] = useState(null); // ID текущего играющего кружка
   
   // 📤 ПЕРЕСЫЛКА СООБЩЕНИЙ
   const [forwardModalVisible, setForwardModalVisible] = useState(false);
@@ -1715,11 +1732,12 @@ const ChatScreen = ({ route, navigation }) => {
       // ⚡ ОПТИМИЗАЦИЯ: Сначала показываем кэшированные сообщения, потом загружаем свежие
       if (pageNum === 1) {
         try {
-          const cacheKey = isGroup ? `group_messages_cache_${user.id}` : `messages_cache_${user.id}`;
-          const cached = await AsyncStorage.getItem(cacheKey);
-          if (cached) {
-            const cachedMessages = JSON.parse(cached);
-            // ⭐ ИСПРАВЛЕНИЕ: Нормализуем URL в кэшированных сообщениях
+          const cachedMessages = isGroup 
+            ? await loadChatMessages(user.id) // Для групп тоже используем loadChatMessages пока
+            : await loadChatMessages(user.id);
+          
+          if (cachedMessages && cachedMessages.length > 0) {
+            // Нормализуем URL в кэшированных сообщениях
             const normalizedCachedMessages = cachedMessages.map(msg => ({
               ...msg,
               media_url: normalizeMediaUrl(msg.media_url)
@@ -1741,14 +1759,9 @@ const ChatScreen = ({ route, navigation }) => {
       
       const messages = Array.isArray(response.data) ? response.data : [];
       
-      // ⚡ Кэшируем свежие сообщения
+      // ⚡ Кэшируем свежие сообщения через messageCache
       if (pageNum === 1 && messages.length > 0) {
-        try {
-          const cacheKey = isGroup ? `group_messages_cache_${user.id}` : `messages_cache_${user.id}`;
-          await AsyncStorage.setItem(cacheKey, JSON.stringify(messages));
-        } catch (cacheErr) {
-          // Игнорируем ошибки кэша
-        }
+        saveChatMessages(user.id, messages).catch(() => {});
       }
       
       // ⚡ ЕСЛИ ПЕРВАЯ СТРАНИЦА - ПОЛНАЯ ЗАГРУЗКА
@@ -1781,6 +1794,28 @@ const ChatScreen = ({ route, navigation }) => {
       
       // Группируем по датам
       const groupedMessages = groupMessagesByDate(correctedMessages);
+      
+      // 🎬 Предзагружаем все медиа в фоне
+      const videoCircleUrls = correctedMessages
+        .filter(msg => (msg.media_type === 'video_circle' || msg.is_circle) && msg.media_url)
+        .map(msg => msg.media_url);
+      const imageUrls = correctedMessages
+        .filter(msg => msg.media_type === 'image' && msg.media_url)
+        .map(msg => msg.media_url);
+      const videoUrls = correctedMessages
+        .filter(msg => msg.media_type === 'video' && !msg.is_circle && msg.media_url)
+        .map(msg => msg.media_url);
+      
+      // Предзагрузка в фоне
+      if (videoCircleUrls.length > 0) {
+        preloadVideos(videoCircleUrls);
+      }
+      if (imageUrls.length > 0) {
+        preloadMediaList(imageUrls, 'image');
+      }
+      if (videoUrls.length > 0) {
+        preloadMediaList(videoUrls, 'video');
+      }
       
       // Если первая страница - заменяем все сообщения, иначе добавляем в начало
       if (pageNum === 1) {
@@ -2358,6 +2393,8 @@ const ChatScreen = ({ route, navigation }) => {
       sender_username: currentUser?.username || 'Вы',
       media_type: mediaData?.type || 'text',
       media_url: mediaData?.url || null,
+      is_circle: mediaData?.is_circle || false, // ⭐ Флаг видеокружка
+      duration: mediaData?.duration || null, // ⭐ Длительность видео
       caption: captionText || null,
       is_read: false,
       is_edited: false,
@@ -2400,6 +2437,8 @@ const ChatScreen = ({ route, navigation }) => {
         reply_to: replyToMessage?.id || null,
         media_type: mediaData?.type || 'text',
         media_url: mediaData?.url || null,
+        is_circle: mediaData?.is_circle || false, // ⭐ Флаг видеокружка
+        duration: mediaData?.duration || null, // ⭐ Длительность видео
         caption: captionText || null,
       };
       
@@ -2408,17 +2447,23 @@ const ChatScreen = ({ route, navigation }) => {
         : messageAPI.sendMessage(messageData));
 
       // ⭐ ИСПРАВЛЕНИЕ: Заменяем временный ID на реальный с полными данными
+      const finalMessage = {
+        ...response.data,
+        sender_username: currentUser?.username || 'Вы',
+        is_optimistic: false, // убираем флаг оптимистичности
+        is_circle: messageData.is_circle || response.data?.is_circle || false, // ⭐ Сохраняем флаг кружка
+        duration: messageData.duration || response.data?.duration || null, // ⭐ Сохраняем длительность
+      };
+      
       setMessages(prev => prev.map(msg => {
         if (msg.id === tempId) {
-          // Заменяем временное сообщение на реальное от сервера
-          return {
-            ...response.data,
-            sender_username: currentUser?.username || 'Вы',
-            is_optimistic: false // убираем флаг оптимистичности
-          };
+          return finalMessage;
         }
         return msg;
       }));
+      
+      // 📦 Добавляем сообщение в кэш
+      addMessageToCache(user.id, finalMessage, isGroup).catch(() => {});
 
       // ✅ Отправляем событие на сокет чтобы сервер обновил получателя
       // И эмитим событие локально для НЕМЕДЛЕННОГО обновления ChatsListScreen
@@ -2446,18 +2491,18 @@ const ChatScreen = ({ route, navigation }) => {
         emitMessageSent(sentMessageData);
       }
       
-    } catch (error) {
+    } catch (err) {
       // Откатываем оптимистичное обновление при ошибке
       setMessages(prev => prev.filter(msg => msg.id !== tempId));
       setNewMessage(messageText);
       
-      if (error.response?.status === 401) {
+      if (err.response?.status === 401) {
         error('Ошибка', 'Сессия истекла. Войдите снова', {
           buttons: [{ text: 'OK', onPress: () => navigation.replace('Login') }],
           autoClose: false
         });
       } else {
-        const errorMessage = error.response?.data?.error || 'Не удалось отправить сообщение';
+        const errorMessage = err.response?.data?.error || 'Не удалось отправить сообщение';
         error('Ошибка отправки', errorMessage);
       }
     }
@@ -2527,6 +2572,7 @@ const ChatScreen = ({ route, navigation }) => {
           { text: 'Отмена', color: '#ccc', textColor: '#333', onPress: () => {} },
           { text: 'Фото', color: theme.primary, onPress: () => pickImage() },
           { text: 'Видео', color: theme.primary, onPress: () => pickVideo() },
+          { text: '🎬 Кружок', color: '#667eea', onPress: () => setVideoCircleRecorderVisible(true) },
         ],
         autoClose: false
       }
@@ -2661,6 +2707,91 @@ const ChatScreen = ({ route, navigation }) => {
       
     } catch (err) {
       error('Ошибка', 'Не удалось загрузить голосовое сообщение');
+    }
+  };
+
+  // 🎬 Обработчик записи видеокружка
+  const handleVideoCircleRecorded = async (videoData) => {
+    try {
+      setVideoCircleRecorderVisible(false);
+      
+      console.log('🎬 [VIDEO_CIRCLE] Начало загрузки видеокружка:', {
+        uri: videoData.uri,
+        duration: videoData.duration
+      });
+      
+      // Проверяем размер файла
+      const FileSystem = require('expo-file-system/legacy');
+      const fileInfo = await FileSystem.getInfoAsync(videoData.uri);
+      const fileSizeMB = (fileInfo.size / 1024 / 1024).toFixed(2);
+      console.log(`🎬 [VIDEO_CIRCLE] Размер файла: ${fileSizeMB} MB`);
+      
+      if (fileInfo.size > 50 * 1024 * 1024) {
+        error('Ошибка', `Видео слишком большое (${fileSizeMB} MB). Максимум 50 MB.`);
+        return;
+      }
+      
+      // Показываем индикатор загрузки
+      setMediaUploadProgress({
+        uri: videoData.uri,
+        progress: 0,
+        speed: `Загрузка ${fileSizeMB} MB...`,
+        timeRemaining: '',
+        type: 'video'
+      });
+      setUploadingMediaUri(videoData.uri);
+      
+      console.log('🎬 [VIDEO_CIRCLE] Отправка на сервер через mediaAPI...');
+      
+      // ✅ Используем mediaAPI.uploadMedia как для остальных медиа
+      const uploadResponse = await mediaAPI.uploadMedia(videoData.uri, 'video');
+      
+      console.log('🎬 [VIDEO_CIRCLE] Ответ сервера:', uploadResponse.data);
+      
+      const mediaUrl = uploadResponse.data?.url;
+      
+      if (!mediaUrl) {
+        throw new Error('Сервер не вернул URL видео');
+      }
+      
+      console.log('🎬 [VIDEO_CIRCLE] Видео загружено:', mediaUrl);
+      
+      // ⭐ Сохраняем локальный файл в кэш СРАЗУ, до отправки сообщения
+      // Это позволит мгновенно воспроизвести видео без повторной загрузки
+      try {
+        const cachedPath = await cacheLocalFile(videoData.uri, mediaUrl, 'video_circle');
+        if (cachedPath) {
+          console.log('🎬 [VIDEO_CIRCLE] Локальный файл закэширован:', cachedPath);
+        }
+      } catch (cacheErr) {
+        console.warn('🎬 [VIDEO_CIRCLE] Ошибка кэширования (не критично):', cacheErr.message);
+      }
+      
+      // Скрываем индикатор загрузки
+      setUploadingMediaUri(null);
+      setMediaUploadProgress(null);
+      
+      // Отправляем сообщение с видеокружком
+      // ⭐ Используем тип video_circle для отображения как кружок
+      await sendMessage({ 
+        type: 'video_circle', 
+        url: mediaUrl,
+        duration: videoData.duration,
+        is_circle: true,
+      });
+      
+      console.log('🎬 [VIDEO_CIRCLE] Сообщение отправлено успешно');
+    } catch (err) {
+      console.error('❌ [VIDEO_CIRCLE] Ошибка отправки видеокружка:', err);
+      console.error('❌ [VIDEO_CIRCLE] Детали ошибки:', {
+        message: err.message,
+        code: err.code,
+        response: err.response?.data,
+        status: err.response?.status,
+      });
+      setUploadingMediaUri(null);
+      setMediaUploadProgress(null);
+      error('Ошибка', 'Не удалось отправить видеокружок: ' + (err.message || 'Неизвестная ошибка'));
     }
   };
 
@@ -3142,9 +3273,19 @@ const ChatScreen = ({ route, navigation }) => {
           style={[
             styles.messageContainer,
             isSent ? styles.sentContainer : styles.receivedContainer,
-            isSent
-              ? { ...styles.sentMessage, backgroundColor: theme.sentMessage }
-              : { ...styles.receivedMessage, backgroundColor: theme.surface },
+            // Убираем фон, тени и паддинги для видеокружков
+            (item.media_type === 'video_circle' || item.is_circle) 
+              ? { 
+                  backgroundColor: 'transparent',
+                  shadowOpacity: 0,
+                  elevation: 0,
+                  paddingHorizontal: 0,
+                  paddingVertical: 0,
+                  borderRadius: 0,
+                }
+              : isSent
+                ? { ...styles.sentMessage, backgroundColor: theme.sentMessage }
+                : { ...styles.receivedMessage, backgroundColor: theme.surface },
           ]}
         >
           {shouldShowInlineLabel && (
@@ -3184,10 +3325,12 @@ const ChatScreen = ({ route, navigation }) => {
                 setSelectedPhotoUri(item.media_url);
                 setFullscreenPhotoVisible(true);
               }}>
-                <Image 
+                <CachedImage 
                   source={{ uri: item.media_url }} 
                   style={styles.messageImage}
                   resizeMode="cover"
+                  showLoader={true}
+                  loaderColor="#667eea"
                 />
               </TouchableOpacity>
               {item.caption && (
@@ -3199,53 +3342,48 @@ const ChatScreen = ({ route, navigation }) => {
                 </Text>
               )}
             </View>
+          ) : (item.media_type === 'video_circle' || item.is_circle) && item.media_url ? (
+            <VideoCirclePlayer
+              uri={item.media_url}
+              duration={item.duration || 0}
+              size="message"
+              isCurrentUser={isSent}
+              theme={theme}
+              onLongPress={handleLongPress}
+              style={{ marginVertical: 4 }}
+              messageId={item.id}
+              isActive={activeVideoCircleId === item.id}
+              onPlay={() => setActiveVideoCircleId(item.id)}
+              onStop={() => {
+                if (activeVideoCircleId === item.id) {
+                  setActiveVideoCircleId(null);
+                }
+              }}
+            />
           ) : item.media_type === 'video' && item.media_url ? (
             <View>
-              {videoLoadErrors[item.id] ? (
-                <View style={[styles.videoErrorContainer, { backgroundColor: theme.background }]}>
-                  <Ionicons name="alert-circle-outline" size={32} color="#FF6B6B" />
-                  <Text style={[styles.videoErrorText, { color: '#FF6B6B' }]}>
-                    {videoLoadErrors[item.id]}
-                  </Text>
-                  <Text style={[styles.videoErrorUrl, { color: theme.textSecondary }]} numberOfLines={1}>
-                    {item.media_url}
-                  </Text>
-                </View>
-              ) : (
-                <Video
-                  key={`video-${item.id}`}
-                  source={{ uri: item.media_url }}
-                  style={styles.messageVideo}
-                  useNativeControls={true}
-                  resizeMode="contain"
-                  shouldPlay={false}
-                  progressUpdateIntervalMillis={500}
-                  onError={(error) => {
-                    console.error('❌ [VIDEO] Ошибка загрузки видео:', {
-                      url: item.media_url,
-                      error: error?.message || error
-                    });
-                    setVideoLoadErrors(prev => ({
-                      ...prev,
-                      [item.id]: error?.message || 'Не удалось загрузить видео'
-                    }));
-                  }}
-                  onLoad={(data) => {
-                    console.log('✅ [VIDEO] Видео успешно загружено:', {
-                      url: item.media_url,
-                      duration: data?.durationMillis,
-                      isPlaying: data?.isPlaying
-                    });
-                  }}
-                  onLoadStart={() => {
-                    console.log('⏳ [VIDEO] Начало загрузки видео:', item.media_url);
-                  }}
-                  posterResizeMode="contain"
-                  rate={1.0}
-                  volume={1.0}
-                  isMuted={false}
-                />
-              )}
+              <CachedVideo
+                key={`video-${item.id}`}
+                source={{ uri: item.media_url }}
+                style={styles.messageVideo}
+                useNativeControls={true}
+                resizeMode="contain"
+                shouldPlay={false}
+                showLoader={true}
+                loaderColor="#667eea"
+                onError={(error) => {
+                  console.error('❌ [VIDEO] Ошибка загрузки видео:', {
+                    url: item.media_url,
+                    error: error?.message || error
+                  });
+                }}
+                onLoad={(data) => {
+                  console.log('✅ [VIDEO] Видео успешно загружено:', {
+                    url: item.media_url,
+                    duration: data?.durationMillis
+                  });
+                }}
+              />
               {item.caption && (
                 <Text style={[
                   styles.captionText,
@@ -4021,6 +4159,13 @@ const ChatScreen = ({ route, navigation }) => {
                 ) : (
                   <Ionicons name="mic" size={16} color="#667eea" />
                 )}
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.videoCircleButton}
+                onPress={() => setVideoCircleRecorderVisible(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="radio-button-on" size={16} color="#667eea" />
               </TouchableOpacity>
               <TouchableOpacity style={styles.sendButton} onPress={() => sendMessage()}>
                 <Ionicons name="send" size={16} color="#fff" />
@@ -4986,6 +5131,13 @@ const ChatScreen = ({ route, navigation }) => {
           visible={voiceRecorderModalVisible}
           onCancel={() => setVoiceRecorderModalVisible(false)}
           onSend={handleVoiceMessageSend}
+          theme={theme}
+        />
+
+        <VideoCircleRecorder
+          visible={videoCircleRecorderVisible}
+          onClose={() => setVideoCircleRecorderVisible(false)}
+          onVideoRecorded={handleVideoCircleRecorded}
           theme={theme}
         />
 
@@ -6004,6 +6156,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 4,
+    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+  },
+  videoCircleButton: {
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 2,
     backgroundColor: 'rgba(102, 126, 234, 0.1)',
   },
   voiceRecordingIndicator: {

@@ -120,10 +120,20 @@ export class AudioRecorder {
     try {
       if (this.durationUpdateInterval) {
         clearInterval(this.durationUpdateInterval);
+        this.durationUpdateInterval = null;
       }
 
       if (this.recording) {
-        await this.recording.stopAndUnloadAsync();
+        try {
+          // Проверяем статус записи перед остановкой
+          const status = await this.recording.getStatusAsync();
+          if (status.isRecording || status.isDoneRecording === false) {
+            await this.recording.stopAndUnloadAsync();
+          }
+        } catch (innerError) {
+          // Игнорируем ошибки при отмене - запись могла уже быть остановлена
+          console.log('⚠️ Запись уже остановлена или не содержит данных');
+        }
         this.recording = null;
       }
 
@@ -134,8 +144,14 @@ export class AudioRecorder {
       console.log('❌ Запись отменена');
       return true;
     } catch (error) {
-      console.error('❌ Ошибка при отмене записи:', error);
-      return false;
+      // Не логируем как ошибку, это нормальное поведение
+      console.log('⚠️ Отмена записи с предупреждением:', error.message);
+      // Все равно сбрасываем состояние
+      this.recording = null;
+      this.isRecording = false;
+      this.isPaused = false;
+      this.recordingDuration = 0;
+      return true;
     }
   }
 

@@ -33,6 +33,10 @@ import VoiceMessagePlayer from '../components/VoiceMessagePlayer';
 import audioRecorder from '../services/audioRecorder';
 import TypingIndicator from '../components/TypingIndicator';
 import MessageCheckmark from '../components/MessageCheckmark';
+import CachedImage from '../components/CachedImage';
+import CachedVideo from '../components/CachedVideo';
+import { preloadMediaList, cleanOldCache } from '../services/mediaCache';
+import { saveGroupMessages, loadGroupMessages, addMessageToCache, cleanOldMessageCache } from '../services/messageCache';
 
 const GroupChatScreen = ({ route, navigation }) => {
   const { theme } = useTheme();
@@ -128,6 +132,9 @@ const GroupChatScreen = ({ route, navigation }) => {
 
   useEffect(() => {
     loadCurrentUser();
+    // 🧹 Очистка старого кэша
+    cleanOldCache();
+    cleanOldMessageCache();
   }, []);
 
   const insets = useSafeAreaInsets();
@@ -493,6 +500,18 @@ const GroupChatScreen = ({ route, navigation }) => {
   const loadMessages = async () => {
     try {
       if (!groupState?.id) return;
+      
+      // ⚡ Сначала показываем кэшированные сообщения
+      try {
+        const cachedMessages = await loadGroupMessages(groupState.id);
+        if (cachedMessages && cachedMessages.length > 0) {
+          setMessages(cachedMessages);
+          setTimeout(() => scrollToBottom(), 100);
+        }
+      } catch (cacheErr) {
+        // Игнорируем ошибки кэша
+      }
+      
       const response = await groupAPI.getGroupMessages(groupState.id);
       if (response.data && response.data.length > 0) {
         console.log('📨 FULL FIRST MESSAGE:', JSON.stringify(response.data[0], null, 2));
@@ -523,6 +542,24 @@ const GroupChatScreen = ({ route, navigation }) => {
           return { ...msg, is_read: isRead };
         });
         setMessages(messagesWithReadStatus);
+        
+        // 💾 Сохраняем в кэш
+        saveGroupMessages(groupState.id, messagesWithReadStatus).catch(() => {});
+        
+        // 📦 Предзагрузка медиа в фоне
+        const imageUrls = messagesWithReadStatus
+          .filter(msg => msg.media_type === 'image' && msg.media_url)
+          .map(msg => msg.media_url);
+        const videoUrls = messagesWithReadStatus
+          .filter(msg => msg.media_type === 'video' && msg.media_url)
+          .map(msg => msg.media_url);
+        
+        if (imageUrls.length > 0) {
+          preloadMediaList(imageUrls, 'image');
+        }
+        if (videoUrls.length > 0) {
+          preloadMediaList(videoUrls, 'video');
+        }
       } else {
         setMessages(response.data || []);
       }
@@ -734,15 +771,20 @@ const GroupChatScreen = ({ route, navigation }) => {
       // ✅ ИСПРАВЛЕНИЕ: Добавляем сообщение локально СРАЗУ
       // Отправитель НИКОГДА не получает event 'new_group_message' от сервера
       // Поэтому просто добавляем локально и не ждем socket события
+      const finalMessage = response.data;
+      
       setMessages(prev => {
-        const exists = prev.some(msg => msg.id === response.data.id);
+        const exists = prev.some(msg => msg.id === finalMessage.id);
         if (exists) {
           console.log('⚠️ Сообщение уже в списке, не дублируем');
           return prev;
         }
         console.log(`✅ Добавляю отправленное сообщение локально. Всего: ${prev.length + 1}`);
-        return [...prev, response.data];
+        return [...prev, finalMessage];
       });
+      
+      // 📦 Добавляем в кэш
+      addMessageToCache(groupState.id, finalMessage, true).catch(() => {});
       
       setReplyToMessage(null);
       setTimeout(() => scrollToBottom(), 100);
@@ -1189,10 +1231,12 @@ const GroupChatScreen = ({ route, navigation }) => {
                 
                 {item.media_type === 'image' && item.media_url ? (
                   <View>
-                    <Image 
+                    <CachedImage 
                       source={{ uri: item.media_url }} 
                       style={styles.messageImage}
                       resizeMode="cover"
+                      showLoader={true}
+                      loaderColor="#667eea"
                     />
                     {item.caption && (
                       <Text style={[
@@ -1205,12 +1249,14 @@ const GroupChatScreen = ({ route, navigation }) => {
                   </View>
                 ) : item.media_type === 'video' && item.media_url ? (
                   <View>
-                    <Video
+                    <CachedVideo
                       source={{ uri: item.media_url }}
                       style={styles.messageVideo}
                       useNativeControls={true}
                       resizeMode="contain"
                       shouldPlay={false}
+                      showLoader={true}
+                      loaderColor="#667eea"
                       onError={(error) => console.log('Ошибка видео:', error)}
                       onLoad={() => console.log('Видео загружено')}
                     />
