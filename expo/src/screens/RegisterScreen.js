@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI } from '../services/api';
 import { useModalAlert } from '../contexts/ModalAlertContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { resetSocket } from '../services/globalSocket';
 
 // Анимированный инпут компонент с иконкой
@@ -49,7 +50,7 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
         styles.inputWrapper,
         {
           transform: [{ scale: scaleAnim }],
-          borderColor: isFocused ? '#FFA500' : '#2A2A3C',
+          borderColor: isFocused ? '#3B82F6' : '#E5E7EB',
         },
         isFocused && styles.inputWrapperFocused,
       ]}
@@ -58,14 +59,14 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
         <Ionicons 
           name={icon} 
           size={20} 
-          color={isFocused ? '#FFA500' : 'rgba(255,255,255,0.4)'} 
+          color={isFocused ? '#3B82F6' : '#9CA3AF'} 
           style={styles.inputIcon}
         />
       )}
       <TextInput
         style={styles.input}
         placeholder={placeholder}
-        placeholderTextColor="rgba(255, 255, 255, 0.4)"
+        placeholderTextColor="#D1D5DB"
         value={value}
         onChangeText={onChangeText}
         secureTextEntry={secureTextEntry}
@@ -81,14 +82,12 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
 
 const RegisterScreen = ({ navigation }) => {
   const { error: showError, warning: showWarning, success: showSuccess } = useModalAlert();
+  const theme = useTheme();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // Цвета темы (оранжевый)
-  const theme = { primary: '#FFA500' };
 
   const showValidationModal = useCallback((title, message) => {
     showWarning(title, message, {
@@ -317,10 +316,10 @@ const RegisterScreen = ({ navigation }) => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Тёмный контейнер с формой */}
+          {/* Светлый контейнер с формой */}
           <LinearGradient
-            colors={['#3D3D54', '#2E2E42', '#222230']}
-            locations={[0, 0.4, 1]}
+            colors={['#1A1F3A', '#1E2340']}
+            locations={[0, 1]}
             style={styles.formCard}
           >
             {/* Декоративная линия сверху */}
@@ -370,7 +369,7 @@ const RegisterScreen = ({ navigation }) => {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={['#FFB347', '#FFA500', '#FF8C00']}
+                colors={['#3B82F6', '#60A5FA']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.registerButtonGradient}
@@ -451,7 +450,7 @@ const RegisterScreen = ({ navigation }) => {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={['#FFB347', '#FFA500', '#FF8C00']}
+              colors={['#3B82F6', '#60A5FA', '#93C5FD']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.continueButtonGradient}
@@ -548,7 +547,7 @@ const RegisterScreen = ({ navigation }) => {
               ]}
             >
               <LinearGradient
-                colors={['#FFB347', '#FFA500', '#FF8C00']}
+                colors={['#3B82F6', '#60A5FA']}
                 style={styles.successCircle}
               >
                 <Animated.View
@@ -628,61 +627,60 @@ const RegisterScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#6B6B8D',
+    backgroundColor: '#0A0E27',
   },
   orangeCircle: {
     position: 'absolute',
-    top: -60,
-    left: -60,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: '#FFA500',
-    shadowColor: '#FFA500',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    shadowColor: 'rgba(99, 102, 241, 0.2)',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 15,
+    shadowOpacity: 0.3,
+    shadowRadius: 40,
+    elevation: 5,
   },
   orangeCircleSmall: {
     position: 'absolute',
-    top: 90,
-    left: 70,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#FFA500',
-    opacity: 0.6,
+    top: 150,
+    right: 30,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+    opacity: 1,
   },
   purpleCircle: {
     position: 'absolute',
-    bottom: 60,
-    right: -40,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#5A5A7A',
-    opacity: 0.5,
+    bottom: -100,
+    left: -80,
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    opacity: 1,
   },
   headerContainer: {
     position: 'absolute',
     top: 50,
-    right: 24,
-    alignItems: 'flex-end',
+    left: 24,
+    alignItems: 'flex-start',
     zIndex: 10,
   },
   headerTitle: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#FFA500',
-    textShadowColor: 'rgba(255, 165, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+    fontSize: 30,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 4,
+    fontSize: 15,
+    color: '#9CA3AF',
+    marginTop: 8,
+    fontWeight: '500',
   },
   keyboardView: {
     flex: 1,
@@ -690,51 +688,56 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
     paddingVertical: 20,
   },
   formCard: {
-    borderRadius: 28,
+    borderRadius: 20,
     paddingHorizontal: 24,
-    paddingTop: 40,
-    paddingBottom: 32,
+    paddingTop: 32,
+    paddingBottom: 28,
+    backgroundColor: '#1A1F3A',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#2D3447',
   },
   formCardAccent: {
     position: 'absolute',
     top: 0,
-    left: 24,
-    right: 24,
-    height: 3,
-    backgroundColor: '#FFA500',
-    borderRadius: 2,
+    left: 0,
+    right: 0,
+    height: 4,
+    backgroundColor: 'linear-gradient(90deg, #3B82F6, #60A5FA)',
   },
   inputWrapper: {
-    backgroundColor: '#1A1A28',
-    borderRadius: 16,
+    backgroundColor: '#2D3447',
+    borderRadius: 12,
     paddingHorizontal: 16,
     marginBottom: 14,
-    height: 56,
+    height: 54,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 2,
+    borderWidth: 1.5,
+    borderColor: '#3D4456',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   inputWrapperFocused: {
-    shadowColor: '#FFA500',
+    borderColor: '#60A5FA',
+    backgroundColor: '#353F52',
+    shadowColor: '#60A5FA',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
   },
   inputIcon: {
     marginRight: 12,
@@ -744,18 +747,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#FFFFFF',
     height: '100%',
+    fontWeight: '500',
   },
   registerButton: {
-    height: 56,
-    borderRadius: 16,
+    height: 54,
+    borderRadius: 12,
     overflow: 'hidden',
     marginTop: 16,
     marginBottom: 20,
-    shadowColor: '#FFA500',
+    shadowColor: '#60A5FA',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 6,
   },
   registerButtonGradient: {
     flex: 1,
@@ -772,17 +776,18 @@ const styles = StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 16,
+    marginVertical: 20,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: '#3D4456',
   },
   dividerText: {
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: '#6B7280',
     fontSize: 13,
-    marginHorizontal: 16,
+    marginHorizontal: 12,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',
@@ -791,17 +796,18 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: '#9CA3AF',
+    fontWeight: '500',
   },
   footerLink: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFA500',
+    color: '#60A5FA',
   },
   // Стили для анимации успешной регистрации
   successOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#1E1E2E', // полностью непрозрачный
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
@@ -809,47 +815,47 @@ const styles = StyleSheet.create({
   successAnimationContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-    width: 300,
-    height: 300,
+    width: 280,
+    height: 280,
   },
   confettiParticle: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   successRing: {
     position: 'absolute',
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     borderWidth: 3,
-    borderColor: '#FFA500',
+    borderColor: '#6366F1',
   },
   successRing2: {
-    borderColor: '#FF6B6B',
+    borderColor: '#3B82F6',
     borderWidth: 2,
   },
   successCircleOuter: {
-    shadowColor: '#FFA500',
+    shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
+    shadowOpacity: 0.9,
     shadowRadius: 40,
     elevation: 25,
   },
   successCircle: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
   },
   successPulse: {
     position: 'absolute',
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     backgroundColor: '#fff',
   },
   successTextContainer: {
@@ -860,16 +866,13 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     color: '#FFFFFF',
-    textShadowColor: 'rgba(255, 165, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   successSubtext: {
     marginTop: 8,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 18,
   },
   categoriesList: {
@@ -880,39 +883,45 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   categoryButton: {
-    backgroundColor: '#222230',
-    borderRadius: 18,
-    paddingHorizontal: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     margin: 4,
     borderWidth: 2,
-    borderColor: '#2A2A3C',
+    borderColor: '#E5E7EB',
   },
   categoryButtonSelected: {
-    backgroundColor: '#FFA500',
-    borderColor: '#FFA500',
+    backgroundColor: '#6366F1',
+    borderColor: '#6366F1',
   },
   categoryButtonText: {
-    color: '#fff',
-    fontSize: 15,
+    color: '#6B7280',
+    fontSize: 14,
     fontWeight: '600',
   },
   categoryButtonTextSelected: {
-    color: '#222230',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   continueButton: {
-    backgroundColor: '#FFA500',
-    borderRadius: 22,
+    backgroundColor: '#6366F1',
+    borderRadius: 12,
     paddingHorizontal: 32,
     paddingVertical: 12,
     marginTop: 8,
     alignItems: 'center',
-    shadowColor: '#FFA500',
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 6,
+  },
+  continueButtonGradient: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   continueButtonText: {
     color: '#fff',

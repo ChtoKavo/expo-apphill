@@ -503,7 +503,7 @@ const styles = StyleSheet.create({
   permissionBtn: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     borderRadius: 12,
     marginBottom: 12,
   },

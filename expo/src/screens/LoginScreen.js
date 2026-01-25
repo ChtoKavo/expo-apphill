@@ -18,6 +18,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI } from '../services/api';
 import { useModalAlert } from '../contexts/ModalAlertContext';
+import { useTheme } from '../contexts/ThemeContext';
 import BannedAccountModal from '../components/BannedAccountModal';
 import { resendPushTokenAfterLogin } from '../services/notifications';
 import { resetSocket } from '../services/globalSocket';
@@ -57,7 +58,7 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
         styles.inputWrapper,
         {
           transform: [{ scale: scaleAnim }],
-          borderColor: isFocused ? '#FFA500' : '#2A2A3C',
+          borderColor: isFocused ? '#3B82F6' : '#E5E7EB',
         },
         isFocused && styles.inputWrapperFocused,
       ]}
@@ -66,14 +67,14 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
         <Ionicons 
           name={icon} 
           size={20} 
-          color={isFocused ? '#FFA500' : 'rgba(255,255,255,0.4)'} 
+          color={isFocused ? '#3B82F6' : '#9CA3AF'} 
           style={styles.inputIcon}
         />
       )}
       <TextInput
         style={styles.input}
         placeholder={placeholder}
-        placeholderTextColor="rgba(255, 255, 255, 0.4)"
+        placeholderTextColor="#D1D5DB"
         value={value}
         onChangeText={onChangeText}
         secureTextEntry={secureTextEntry}
@@ -89,6 +90,7 @@ const AnimatedInput = ({ placeholder, value, onChangeText, secureTextEntry, keyb
 
 const LoginScreen = ({ navigation }) => {
   const { error: showError, warning: showWarning } = useModalAlert();
+  const theme = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -105,10 +107,7 @@ const LoginScreen = ({ navigation }) => {
   const ring2Anim = useRef(new Animated.Value(0)).current;
   const confettiAnim = useRef(new Animated.Value(0)).current;
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-
-  // Цвета темы (оранжевый)
-  const theme = { primary: '#FFA500' };
-
+  
   const [request, response, promptAsync] = Google.useAuthRequest({
     // Android Client ID для production сборки
     androidClientId: "95571551481-g6kuqjkh23eja996jrifah4unc6d1fcd.apps.googleusercontent.com",
@@ -430,10 +429,10 @@ const LoginScreen = ({ navigation }) => {
         style={styles.keyboardView}
       >
         <View style={styles.centerContainer}>
-          {/* Тёмный контейнер с формой */}
+          {/* Светлый контейнер с формой */}
           <LinearGradient
-            colors={['#3D3D54', '#2E2E42', '#222230']}
-            locations={[0, 0.4, 1]}
+            colors={['#1A1F3A', '#1E2340']}
+            locations={[0, 1]}
             style={styles.formCard}
           >
             {/* Декоративная линия сверху */}
@@ -465,7 +464,7 @@ const LoginScreen = ({ navigation }) => {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={['#FFB347', '#FFA500', '#FF8C00']}
+                colors={['#3B82F6', '#60A5FA']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.loginButtonGradient}
@@ -617,7 +616,7 @@ const LoginScreen = ({ navigation }) => {
               ]}
             >
             <LinearGradient
-              colors={['#FFB347', '#FFA500', '#FF8C00']}
+              colors={['#3B82F6', '#60A5FA']}
               style={styles.successCircle}
             >
               {/* Пульсирующий блик */}
@@ -666,61 +665,60 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#6B6B8D',
+    backgroundColor: '#0A0E27',
   },
   orangeCircle: {
     position: 'absolute',
-    top: -60,
-    left: -60,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: '#FFA500',
-    shadowColor: '#FFA500',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    shadowColor: 'rgba(99, 102, 241, 0.2)',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 10,
+    shadowOpacity: 0.3,
+    shadowRadius: 40,
+    elevation: 5,
   },
   orangeCircleSmall: {
     position: 'absolute',
-    top: 80,
-    left: 50,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#FFB347',
-    opacity: 0.6,
+    top: 150,
+    right: 30,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+    opacity: 1,
   },
   purpleCircle: {
     position: 'absolute',
-    bottom: 100,
-    right: -40,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#5A5A7A',
-    opacity: 0.5,
+    bottom: -100,
+    left: -80,
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    opacity: 1,
   },
   headerContainer: {
     position: 'absolute',
-    top: 60,
-    right: 24,
-    alignItems: 'flex-end',
+    top: 50,
+    left: 24,
+    alignItems: 'flex-start',
     zIndex: 10,
   },
   headerTitle: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#FFA500',
-    textShadowColor: 'rgba(255, 165, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
+    fontSize: 34,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 4,
+    fontSize: 15,
+    color: '#9CA3AF',
+    marginTop: 8,
+    fontWeight: '500',
   },
   keyboardView: {
     flex: 1,
@@ -728,46 +726,50 @@ const styles = StyleSheet.create({
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
   },
   formCard: {
-    borderRadius: 28,
+    borderRadius: 20,
     paddingHorizontal: 24,
-    paddingTop: 50,
-    paddingBottom: 30,
+    paddingTop: 32,
+    paddingBottom: 28,
     overflow: 'hidden',
+    backgroundColor: '#1A1F3A',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
+    shadowRadius: 16,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#2D3447',
   },
   formCardAccent: {
     position: 'absolute',
     top: 0,
-    left: 20,
-    right: 20,
+    left: 0,
+    right: 0,
     height: 4,
-    backgroundColor: '#FFA500',
-    borderBottomLeftRadius: 4,
-    borderBottomRightRadius: 4,
+    backgroundColor: 'linear-gradient(90deg, #818CF8, #60A5FA)',
   },
   inputWrapper: {
-    backgroundColor: '#1A1A28',
-    borderRadius: 16,
+    backgroundColor: '#2D3447',
+    borderRadius: 12,
     paddingHorizontal: 16,
     marginBottom: 16,
-    height: 56,
+    height: 54,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 2,
+    borderWidth: 1.5,
+    borderColor: '#3D4456',
   },
   inputWrapperFocused: {
-    shadowColor: '#FFA500',
+    borderColor: '#60A5FA',
+    backgroundColor: '#353F52',
+    shadowColor: '#3B82F6',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
   },
   inputIcon: {
     marginRight: 12,
@@ -777,18 +779,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
     height: '100%',
+    fontWeight: '500',
   },
   loginButton: {
-    height: 56,
-    borderRadius: 16,
+    height: 54,
+    borderRadius: 12,
     overflow: 'hidden',
-    marginTop: 20,
+    marginTop: 24,
     marginBottom: 20,
-    shadowColor: '#FFA500',
+    shadowColor: '#60A5FA',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowRadius: 12,
+    elevation: 6,
   },
   loginButtonGradient: {
     flex: 1,
@@ -799,23 +802,24 @@ const styles = StyleSheet.create({
   loginButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 18,
+    fontSize: 17,
+    letterSpacing: 0.5,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 16,
+    marginVertical: 20,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: '#3D4456',
   },
   dividerText: {
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: '#6B7280',
     fontSize: 13,
-    marginHorizontal: 16,
-    fontWeight: '500',
+    marginHorizontal: 12,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',
@@ -824,33 +828,42 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 14,
-    color: '#FFFFFF',
+    color: '#9CA3AF',
+    fontWeight: '500',
   },
   footerLink: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFA500',
+    color: '#60A5FA',
   },
   socialContainer: {
-    marginTop: 24,
+    marginTop: 28,
     gap: 12,
   },
   socialButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    height: 50,
-    borderRadius: 25,
+    backgroundColor: '#1A1F3A',
+    height: 52,
+    borderRadius: 12,
     paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: '#2D3447',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 2,
   },
   yandexButton: {
     backgroundColor: '#FFCC00',
+    borderColor: '#FFB800',
   },
   socialIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#2D3447',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -871,60 +884,60 @@ const styles = StyleSheet.create({
   socialButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1E1E2E',
+    color: '#FFFFFF',
   },
   // Стили для анимации успешного входа
   successOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(30, 30, 46, 0.98)',
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
   },
   confettiParticle: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   successAnimationContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-    width: 300,
-    height: 300,
+    width: 280,
+    height: 280,
   },
   successRing: {
     position: 'absolute',
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     borderWidth: 3,
-    borderColor: '#FFA500',
+    borderColor: '#818CF8',
   },
   successRing2: {
-    borderColor: '#FF6B6B',
+    borderColor: '#60A5FA',
     borderWidth: 2,
   },
   successCircleOuter: {
-    shadowColor: '#FFA500',
+    shadowColor: '#818CF8',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
+    shadowOpacity: 0.9,
     shadowRadius: 40,
     elevation: 25,
   },
   successCircle: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
   },
   successPulse: {
     position: 'absolute',
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
     backgroundColor: '#fff',
   },
   successTextContainer: {
@@ -935,16 +948,13 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     color: '#FFFFFF',
-    textShadowColor: 'rgba(255, 165, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   successSubtext: {
     marginTop: 8,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: 'rgba(255, 255, 255, 0.8)',
   },
 });
 

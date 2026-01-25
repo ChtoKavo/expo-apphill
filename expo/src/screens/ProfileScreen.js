@@ -39,7 +39,7 @@ const ProfileScreen = ({ navigation }) => {
     status: '',
     avatar: '',
     is_admin: false,
-    cardColor: '#FF6B6B', // Цвет карточки профиля
+    cardColor: '#60A5FA', // Цвет карточки профиля
   });
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -57,7 +57,7 @@ const ProfileScreen = ({ navigation }) => {
   const [brightness, setBrightness] = useState(1);
   
   // Сохраняем начальные значения цвета при открытии модала
-  const [initialColor, setInitialColor] = useState('#FFA705'); // 0 (чёрный) до 1 (яркий)
+  const [initialColor, setInitialColor] = useState('#60A5FA'); // 0 (чёрный) до 1 (яркий)
   
   // 🎮 Гироскоп для parallax эффекта карточки профиля
   const cardRotateX = useRef(new Animated.Value(0)).current;
@@ -66,12 +66,12 @@ const ProfileScreen = ({ navigation }) => {
   
   // Палитра цветов
   const cardColors = [
-    '#FFA705', // Основной оранжевый
-    '#FF8C00', // Темный оранжевый
-    '#FF7B00', // Доп оранжевый
+    '#6366F1', // Основной индиго
+    '#4F46E5', // Темный индиго
+    '#818CF8', // Светлый индиго
     '#FFD93D', // Жёлтый
     '#6BCB77', // Зелёный
-    '#4D96FF', // Синий
+    '#3B82F6', // Синий
     '#A78BFA', // Фиолетовый
     '#F472B6', // Розовый
     '#EC4899', // Малиновый
@@ -327,11 +327,11 @@ const ProfileScreen = ({ navigation }) => {
             cardColor = savedColor;
             console.log('✅ Цвет загружен из AsyncStorage:', cardColor);
           } else {
-            cardColor = '#FF6B6B';
+            cardColor = '#60A5FA';
             console.log('ℹ️ Используется цвет по умолчанию (NOT в БД, NOT в AsyncStorage)');
           }
         } catch (err) {
-          cardColor = '#FF6B6B';
+          cardColor = '#60A5FA';
           console.error('Ошибка чтения AsyncStorage:', err);
         }
       }
@@ -526,7 +526,7 @@ const ProfileScreen = ({ navigation }) => {
 
   // 🎨 Генерируем градиент на основе выбранного цвета карточки
   const getGradientColors = () => {
-    const baseColor = profile.cardColor || '#FF8C00';
+    const baseColor = profile.cardColor || '#3B82F6';
     // Светлый оттенок (для начала градиента)
     const lightColor = baseColor + 'E6'; // Добавляем прозрачность
     // Темный оттенок (для конца градиента)
@@ -563,7 +563,7 @@ const ProfileScreen = ({ navigation }) => {
       icon: 'shield',
       label: 'Админ панель',
       description: 'Управление группами и чатами',
-      tint: '#FF9500',
+      tint: '#6366F1',
       onPress: () => {
         loadAdminGroups();
         loadAdminChats();
@@ -963,7 +963,7 @@ const ProfileScreen = ({ navigation }) => {
               <View style={styles.rgbSliderGroup}>
                 <View style={styles.rgbLabelRow}>
                   <Text style={[styles.rgbLabel, { color: theme.text }]}>Красный</Text>
-                  <Text style={[styles.rgbValue, { color: '#FF6B6B' }]}>{Math.round(rgbRed)}</Text>
+                  <Text style={[styles.rgbValue, { color: '#EF4444' }]}>{Math.round(rgbRed)}</Text>
                 </View>
                 <Slider
                   style={styles.rgbSlider}
@@ -972,9 +972,9 @@ const ProfileScreen = ({ navigation }) => {
                   step={1}
                   value={rgbRed}
                   onValueChange={(value) => setRgbRed(value)}
-                  minimumTrackTintColor="#FF6B6B"
+                  minimumTrackTintColor="#EF4444"
                   maximumTrackTintColor={theme.textLight}
-                  thumbTintColor="#FF6B6B"
+                  thumbTintColor="#EF4444"
                 />
               </View>
 
@@ -1001,7 +1001,7 @@ const ProfileScreen = ({ navigation }) => {
               <View style={styles.rgbSliderGroup}>
                 <View style={styles.rgbLabelRow}>
                   <Text style={[styles.rgbLabel, { color: theme.text }]}>Синий</Text>
-                  <Text style={[styles.rgbValue, { color: '#4D96FF' }]}>{Math.round(rgbBlue)}</Text>
+                  <Text style={[styles.rgbValue, { color: '#3B82F6' }]}>{Math.round(rgbBlue)}</Text>
                 </View>
                 <Slider
                   style={styles.rgbSlider}
@@ -1010,9 +1010,9 @@ const ProfileScreen = ({ navigation }) => {
                   step={1}
                   value={rgbBlue}
                   onValueChange={(value) => setRgbBlue(value)}
-                  minimumTrackTintColor="#4D96FF"
+                  minimumTrackTintColor="#3B82F6"
                   maximumTrackTintColor={theme.textLight}
-                  thumbTintColor="#4D96FF"
+                  thumbTintColor="#3B82F6"
                 />
               </View>
 

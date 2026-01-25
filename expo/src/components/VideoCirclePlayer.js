@@ -240,7 +240,7 @@ const VideoCirclePlayer = ({
   const renderProgressRing = () => {
     const progress = videoDuration > 0 ? currentPosition / (videoDuration * 1000) : 0;
     const strokeDashoffset = circumference * (1 - progress);
-    const progressColor = isCurrentUser ? '#fff' : (theme?.primary || '#667eea');
+    const progressColor = isCurrentUser ? '#fff' : (theme?.primary || '#60A5FA');
     
     // Позиция ползунка (точки)
     const angle = progress * 2 * Math.PI - Math.PI / 2;

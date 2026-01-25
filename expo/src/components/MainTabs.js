@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { AppState } from 'react-native';
+import { AppState, View, ImageBackground } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../contexts/ThemeContext';
+import { useBackgroundImage } from '../contexts/BackgroundImageContext';
 import { useModalAlert } from '../contexts/ModalAlertContext';
 import { profileAPI } from '../services/api';
 import { subscribeToNewMessages } from '../services/globalNotifications';
@@ -17,8 +18,43 @@ import ProfileScreen from '../screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
+// Обёртки для экранов без фонового изображения
+const PostsScreenWrapper = (props) => {
+  const { setBackgroundImage } = useBackgroundImage();
+  useFocusEffect(
+    React.useCallback(() => {
+      setBackgroundImage(null);
+      return () => {};
+    }, [setBackgroundImage])
+  );
+  return <PostsScreen {...props} />;
+};
+
+const FriendsScreenWrapper = (props) => {
+  const { setBackgroundImage } = useBackgroundImage();
+  useFocusEffect(
+    React.useCallback(() => {
+      setBackgroundImage(null);
+      return () => {};
+    }, [setBackgroundImage])
+  );
+  return <FriendsScreen {...props} />;
+};
+
+const ProfileScreenWrapper = (props) => {
+  const { setBackgroundImage } = useBackgroundImage();
+  useFocusEffect(
+    React.useCallback(() => {
+      setBackgroundImage(null);
+      return () => {};
+    }, [setBackgroundImage])
+  );
+  return <ProfileScreen {...props} />;
+};
+
 const MainTabs = () => {
   const { theme } = useTheme();
+  const { backgroundImage, setBackgroundImage } = useBackgroundImage();
   const navigation = useNavigation();
   const { error: showError } = useModalAlert();
   const [unreadCount, setUnreadCount] = useState(0);
@@ -148,8 +184,16 @@ const MainTabs = () => {
   }, [navigation, showError]);
   
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
+    <ImageBackground
+      source={backgroundImage ? { uri: backgroundImage } : { uri: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' }}
+      style={{ flex: 1, backgroundColor: theme.background }}
+      imageStyle={{ opacity: backgroundImage ? 1 : 0 }}
+    >
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
+          sceneContainerStyle: {
+            backgroundColor: 'transparent',
+          },
         tabBarIcon: ({ focused, color, size }) => {
           let iconName;
           
@@ -165,28 +209,32 @@ const MainTabs = () => {
           
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: '#FF9500',
-        tabBarInactiveTintColor: '#64748B',
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.textSecondary,
         tabBarStyle: {
-          backgroundColor: '#0F2A4D',
-          borderTopWidth: 1,
-          borderTopColor: '#1E4976',
-          elevation: 20,
+          backgroundColor: theme.surface,
+          borderTopWidth: 1.5,
+          borderTopColor: theme.border,
+          elevation: 15,
           shadowColor: '#000000',
           shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.3,
-          shadowRadius: 12,
-          height: 75,
-          paddingBottom: 14,
-          paddingTop: 10,
-          paddingHorizontal: 0,
+          shadowOpacity: theme.isDark ? 0.4 : 0.12,
+          shadowRadius: 14,
+          height: 68,
+          paddingBottom: 10,
+          paddingTop: 8,
+          paddingHorizontal: 12,
           position: 'relative',
+          borderRadius: 24,
+          marginHorizontal: 8,
+          marginBottom: 24,
+          overflow: 'hidden',
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: '600',
           marginTop: 6,
-          letterSpacing: 0.3,
+          letterSpacing: 0.4,
         },
         headerShown: false,
       })}
@@ -201,20 +249,21 @@ const MainTabs = () => {
       />
       <Tab.Screen 
         name="Posts" 
-        component={PostsScreen}
+        component={PostsScreenWrapper}
         options={{ tabBarLabel: 'Посты' }}
       />
       <Tab.Screen 
         name="Friends" 
-        component={FriendsScreen}
+        component={FriendsScreenWrapper}
         options={{ tabBarLabel: 'Друзья' }}
       />
       <Tab.Screen 
         name="Profile" 
-        component={ProfileScreen}
+        component={ProfileScreenWrapper}
         options={{ tabBarLabel: 'Профиль' }}
       />
-    </Tab.Navigator>
+      </Tab.Navigator>
+    </ImageBackground>
   );
 };
 

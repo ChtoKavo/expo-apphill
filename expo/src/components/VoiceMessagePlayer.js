@@ -130,7 +130,7 @@ export const VoiceMessagePlayer = ({
     >
       {/* Кнопка воспроизведения */}
       <TouchableOpacity
-        style={[styles.playButton, { backgroundColor: isCurrentUser ? '#667eea' : 'rgba(0, 0, 0, 0.2)' }]}
+        style={[styles.playButton, { backgroundColor: isCurrentUser ? '#60A5FA' : 'rgba(96, 165, 250, 0.2)' }]}
         onPress={playVoiceMessage}
         disabled={loading}
       >
@@ -148,7 +148,7 @@ export const VoiceMessagePlayer = ({
             styles.progressBar,
             {
               width: widthInterpolated,
-              backgroundColor: isCurrentUser ? '#667eea' : 'rgba(102, 126, 234, 0.6)',
+              backgroundColor: isCurrentUser ? '#60A5FA' : 'rgba(96, 165, 250, 0.6)',
             },
           ]}
         />

@@ -356,14 +356,14 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomColor: '#667eea',
+    borderBottomColor: '#60A5FA',
   },
   tabText: {
     fontSize: 16,
     fontWeight: '600',
   },
   activeTabText: {
-    color: '#667eea',
+    color: '#60A5FA',
   },
   groupAvatarPlaceholder: {
     width: 55,
@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     width: 55,
     height: 55,
     borderRadius: 27.5,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     justifyContent: 'center',
     alignItems: 'center',
   },

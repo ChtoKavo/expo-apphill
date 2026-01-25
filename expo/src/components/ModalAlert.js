@@ -44,7 +44,7 @@ const ModalAlert = ({
     },
     info: {
       icon: 'information-circle',
-      color: '#667eea',
+      color: '#60A5FA',
       backgroundColor: 'rgba(102, 126, 234, 0.12)',
     },
   };

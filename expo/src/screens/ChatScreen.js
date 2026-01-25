@@ -3697,9 +3697,9 @@ const ChatScreen = ({ route, navigation }) => {
 
   const callGradient = useMemo(() => {
     if (callType === 'video') {
-      return isDark ? ['#FF8C00', '#FF7B00'] : ['#FFA705', '#FF8C00'];
+      return isDark ? ['#4F46E5', '#6366F1'] : ['#6366F1', '#3B82F6'];
     }
-    return isDark ? ['#FF8C00', '#FF7B00'] : ['#FFA705', '#FF8C00'];
+    return isDark ? ['#4F46E5', '#6366F1'] : ['#6366F1', '#3B82F6'];
   }, [callType, isDark]);
 
   const callCardBackground = useMemo(
@@ -5729,20 +5729,20 @@ const styles = StyleSheet.create({
   dateSeparatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: 'rgba(102, 126, 234, 0.15)',
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
   },
   dateSeparatorBadge: {
     paddingHorizontal: 16,
     paddingVertical: 7,
-    backgroundColor: 'rgba(102, 126, 234, 0.12)',
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
     borderRadius: 20,
     marginHorizontal: 12,
     borderWidth: 1,
-    borderColor: 'rgba(102, 126, 234, 0.25)',
+    borderColor: 'rgba(96, 165, 250, 0.25)',
   },
   dateSeparatorText: {
     fontSize: 12,
-    color: '#667eea',
+    color: '#60A5FA',
     fontWeight: '700',
     letterSpacing: 0.3,
     textTransform: 'uppercase',
@@ -5753,9 +5753,9 @@ const styles = StyleSheet.create({
   header: {
     paddingTop: 12,
     paddingBottom: 20,
-    backgroundColor: '#1a2e4a',
+    backgroundColor: 'transparent',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 149, 0, 0.15)',
+    borderBottomColor: 'rgba(96, 165, 250, 0.15)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
@@ -5777,7 +5777,7 @@ const styles = StyleSheet.create({
   backButton: {
     padding: 10,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 149, 0, 0.1)',
+    backgroundColor: 'rgba(96, 165, 250, 0.1)',
   },
   userInfo: {
     flex: 1,
@@ -5981,7 +5981,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
@@ -6040,12 +6040,12 @@ const styles = StyleSheet.create({
   sentMessage: {
     borderBottomRightRadius: 6,
     borderTopLeftRadius: 24,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
   },
   receivedMessage: {
     borderBottomLeftRadius: 6,
     borderTopRightRadius: 24,
-    backgroundColor: '#f0f2f7',
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
   },
   messageText: {
     fontSize: 15,
@@ -6064,7 +6064,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   receivedText: {
-    color: '#1a202c',
+    color: '#1F2937',
     fontWeight: '500',
   },
   messageTime: {
@@ -6076,7 +6076,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.75)',
   },
   receivedTime: {
-    color: '#718096',
+    color: '#9CA3AF',
   },
   messageTimeContainer: {
     flexDirection: 'row',
@@ -6115,29 +6115,29 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: '#f7f8fc',
+    backgroundColor: 'rgba(96, 165, 250, 0.08)',
     borderRadius: 24,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderWidth: 0,
-    borderColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.15)',
     marginHorizontal: 12,
     marginVertical: 0,
     marginBottom: 12,
     gap: 4,
-    shadowColor: '#667eea',
+    shadowColor: '#60A5FA',
     shadowOffset: {
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
   textInput: {
     flex: 1,
     fontSize: 15,
-    color: '#1a202c',
+    color: '#1F2937',
     maxHeight: 90,
     minHeight: 40,
     paddingVertical: 8,
@@ -6156,7 +6156,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 4,
-    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
   },
   videoCircleButton: {
     borderRadius: 20,
@@ -6165,7 +6165,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 2,
-    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
   },
   voiceRecordingIndicator: {
     borderRadius: 20,
@@ -6192,7 +6192,7 @@ const styles = StyleSheet.create({
     minWidth: 18,
   },
   sendButton: {
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     borderRadius: 20,
     width: 40,
     height: 40,
@@ -6200,12 +6200,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginLeft: 8,
     marginRight: 0,
-    shadowColor: '#667eea',
+    shadowColor: '#60A5FA',
     shadowOffset: {
       width: 0,
       height: 3,
     },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
   },
@@ -6216,7 +6216,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 4,
-    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
   },
   modalContainer: {
     flex: 1,
@@ -6380,7 +6380,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
     borderLeftWidth: 3,
-    borderLeftColor: '#667eea',
+    borderLeftColor: '#60A5FA',
     opacity: 0.9,
   },
   replyHeader: {
@@ -6416,9 +6416,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 12,
     marginHorizontal: 10,
-    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
     borderLeftWidth: 4,
-    borderLeftColor: '#667eea',
+    borderLeftColor: '#60A5FA',
   },
   recordingIndicatorDot: {
     width: 12,
@@ -6434,7 +6434,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 2,
-    color: '#1a202c',
+    color: '#1F2937',
   },
   recordingSubtext: {
     fontSize: 12,
@@ -6448,7 +6448,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
   },
   replyPreview: {
     flexDirection: 'row',
@@ -6458,8 +6458,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
     borderLeftWidth: 4,
-    borderLeftColor: '#667eea',
-    backgroundColor: '#f7f8fc',
+    borderLeftColor: '#60A5FA',
+    backgroundColor: 'rgba(96, 165, 250, 0.08)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -6470,7 +6470,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     marginRight: 8,
-    color: '#667eea',
+    color: '#60A5FA',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -6478,7 +6478,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     lineHeight: 18,
-    color: '#4a5568',
+    color: '#374151',
     fontWeight: '500',
   },
   messageImage: {
@@ -6553,16 +6553,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 28,
+    borderRadius: 18,
     marginBottom: 16,
-    gap: 8,
+    gap: 10,
+    shadowColor: '#60A5FA',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 6,
   },
   addMembersFloatingButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
   groupMembersHeader: {
     flexDirection: 'row',
@@ -6680,7 +6686,8 @@ const styles = StyleSheet.create({
     padding: 6,
     borderWidth: 1,
     borderRadius: 10,
-    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+    backgroundColor: 'rgba(96, 165, 250, 0.15)',
+    borderColor: 'rgba(96, 165, 250, 0.3)',
   },
   groupMembersScroll: {
     maxHeight: 320,
@@ -6771,6 +6778,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 12,
+    borderColor: 'rgba(96, 165, 250, 0.2)',
+    backgroundColor: 'rgba(96, 165, 250, 0.05)',
   },
   searchInput: {
     flex: 1,
@@ -6790,10 +6799,15 @@ const styles = StyleSheet.create({
   addMemberButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#667eea',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
+    backgroundColor: '#60A5FA',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 18,
+    shadowColor: '#60A5FA',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   addMemberButtonDisabled: {
     opacity: 0.6,
@@ -6985,7 +6999,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   contextMenu: {
     borderRadius: 16,
@@ -7023,9 +7037,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 12,
     marginHorizontal: 10,
-    backgroundColor: 'rgba(102, 126, 234, 0.08)',
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
     borderLeftWidth: 4,
-    borderLeftColor: '#667eea',
+    borderLeftColor: '#60A5FA',
   },
   mediaUploadContent: {
     flexDirection: 'row',
@@ -7039,7 +7053,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
-    backgroundColor: 'rgba(102, 126, 234, 0.2)',
+    backgroundColor: 'rgba(96, 165, 250, 0.25)',
   },
   mediaUploadInfo: {
     flex: 1,
@@ -7049,7 +7063,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 6,
-    color: '#1a202c',
+    color: '#1F2937',
   },
   progressBarContainer: {
     flexDirection: 'row',
@@ -7067,14 +7081,14 @@ const styles = StyleSheet.create({
   progressBarFill: {
     height: '100%',
     borderRadius: 3,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
   },
   progressPercent: {
     fontSize: 12,
     fontWeight: '700',
     minWidth: 35,
     textAlign: 'right',
-    color: '#667eea',
+    color: '#60A5FA',
   },
   mediaUploadStats: {
     flexDirection: 'row',
@@ -7099,7 +7113,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: 'rgba(26, 46, 74, 0.9)',
+    backgroundColor: 'rgba(26, 32, 46, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
@@ -7135,26 +7149,26 @@ const styles = StyleSheet.create({
   fullscreenActionButton: {
     flex: 1,
     borderWidth: 1.5,
-    borderColor: '#FF9500',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    borderColor: '#60A5FA',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 149, 0, 0.08)',
-    elevation: 2,
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
+    elevation: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   fullscreenActionButtonText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    marginTop: 6,
+    marginTop: 8,
     textAlign: 'center',
-    letterSpacing: 0.2,
-    color: '#FF9500',
+    letterSpacing: 0.3,
+    color: '#60A5FA',
   },
   
   // ✏️ Стили для редактирования сообщений
@@ -7194,7 +7208,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     marginBottom: 16,
     borderLeftWidth: 4,
-    borderLeftColor: '#667eea',
+    borderLeftColor: '#60A5FA',
   },
   editPreviewLabel: {
     fontSize: 12,
@@ -7202,6 +7216,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    color: '#60A5FA',
   },
   editPreviewText: {
     fontSize: 14,
@@ -7233,6 +7248,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
   },
   editCancelBtnText: {
     fontSize: 16,
@@ -7245,6 +7262,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
+    backgroundColor: '#60A5FA',
   },
   editSaveBtnText: {
     color: '#fff',

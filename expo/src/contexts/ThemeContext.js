@@ -12,68 +12,68 @@ export const useTheme = () => {
 };
 
 export const lightTheme = {
-  background: '#0f141e',
+  background: '#FAFBFF',
   surface: '#FFFFFF',
-  primary: '#FFA705',
-  secondary: '#FF8C00',
-  accent: '#FF7B00',
-  text: '#2D3436',
-  textSecondary: '#636E72',
-  textLight: '#B2BEC3',
-  border: '#FFE0C0',
-  success: '#00B894',
-  error: '#FF7675',
-  warning: '#FDCB6E',
-  gradient: ['#FFA705', '#FF8C00'],
-  sentMessage: '#FFA705',
+  primary: '#3B82F6',
+  secondary: '#EC4899',
+  accent: '#8B5CF6',
+  text: '#1F2937',
+  textSecondary: '#6B7280',
+  textLight: '#D1D5DB',
+  border: '#E5E7EB',
+  success: '#059669',
+  error: '#DC2626',
+  warning: '#D97706',
+  gradient: ['#3B82F6', '#8B5CF6'],
+  sentMessage: '#3B82F6',
   cardShadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.06,
     shadowRadius: 8,
-    elevation: 5
+    elevation: 3
   },
-  inputBackground: '#FFFAF5',
-  buttonGradient: ['#FFA705', '#FF8C00'],
+  inputBackground: '#F3F4F6',
+  buttonGradient: ['#3B82F6', '#8B5CF6'],
   softShadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1
   }
 };
 
 export const darkTheme = {
-  background: '#0a1428',
-  surface: '#1a2e4a',
-  surfaceLight: '#233a54',
-  primary: '#FF9500',
-  secondary: '#FFB347',
-  accent: '#FFA07A',
-  text: '#ffffff',
-  textSecondary: '#c5d0e0',
-  textLight: '#8a95aa',
-  border: '#2a4a6a',
-  success: '#00B894',
-  error: '#FF7675',
-  warning: '#FDCB6E',
-  gradient: ['#FF9500', '#FFB347'],
-  sentMessage: '#1a3a5a',
+  background: '#0A0E27',
+  surface: '#1A1F3A',
+  surfaceLight: '#2D3548',
+  primary: '#60A5FA',
+  secondary: '#F472B6',
+  accent: '#A78BFA',
+  text: '#F0F4F8',
+  textSecondary: '#CBD5E1',
+  textLight: '#94A3B8',
+  border: '#334155',
+  success: '#10B981',
+  error: '#F87171',
+  warning: '#FBBF24',
+  gradient: ['#60A5FA', '#A78BFA'],
+  sentMessage: '#60A5FA',
   cardShadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 5
   },
-  inputBackground: '#1a3a5a',
-  buttonGradient: ['#FF9500', '#FFB347'],
+  inputBackground: '#2D3548',
+  buttonGradient: ['#60A5FA', '#A78BFA'],
   softShadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
-    shadowRadius: 5,
+    shadowRadius: 6,
     elevation: 3
   }
 };
@@ -89,7 +89,10 @@ export const ThemeProvider = ({ children }) => {
   const loadTheme = async () => {
     try {
       const savedTheme = await AsyncStorage.getItem('theme');
-      if (savedTheme === 'dark') {
+      if (savedTheme === 'light') {
+        setIsDark(false);
+        setTheme(lightTheme);
+      } else {
         setIsDark(true);
         setTheme(darkTheme);
       }

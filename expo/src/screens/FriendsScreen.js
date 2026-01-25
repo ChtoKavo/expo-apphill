@@ -592,9 +592,9 @@ const FriendsScreen = ({ navigation }) => {
         case 'pending':
           return { icon: 'time', color: '#FF9500', disabled: true, text: 'Входящая заявка' };
         case 'outgoing':
-          return { icon: 'time', color: '#667eea', disabled: true, text: 'Заявка отправлена' };
+          return { icon: 'time', color: '#60A5FA', disabled: true, text: 'Заявка отправлена' };
         default:
-          return { icon: 'person-add', color: '#667eea', disabled: false, action: () => sendFriendRequest(item.id) };
+          return { icon: 'person-add', color: '#60A5FA', disabled: false, action: () => sendFriendRequest(item.id) };
       }
     };
 
@@ -669,7 +669,7 @@ const FriendsScreen = ({ navigation }) => {
         return (
           <>
             <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: 'rgba(255, 149, 0, 0.15)' }]}>
-              <Ionicons name="search" size={20} color={'#FF9500'} style={styles.searchIcon} />
+              <Ionicons name="search" size={20} color={'#60A5FA'} style={styles.searchIcon} />
               <TextInput
                 style={[styles.searchInput, { color: theme.text }]}
                 value={searchQuery}
@@ -704,10 +704,10 @@ const FriendsScreen = ({ navigation }) => {
                   </View>
                 ) : (
                 <View style={styles.emptyState}>
-                  <Ionicons name="search-outline" size={64} color={'#FF9500'} />
+                  <Ionicons name="search-outline" size={64} color={'#60A5FA'} />
                   <Text style={[styles.emptyText, { color: theme.text }]}>Пользователи не найдены</Text>
-                  <TouchableOpacity onPress={loadSuggestedUsers} style={[styles.reloadButton, { backgroundColor: 'rgba(255, 149, 0, 0.1)', borderColor: '#FF9500', borderWidth: 1.5 }]}>
-                    <Text style={[styles.reloadButtonText, { color: '#FF9500' }]}>Обновить список</Text>
+                  <TouchableOpacity onPress={loadSuggestedUsers} style={[styles.reloadButton, { backgroundColor: 'rgba(96, 165, 250, 0.15)', borderColor: '#60A5FA', borderWidth: 1.5 }]}>
+                    <Text style={[styles.reloadButtonText, { color: '#60A5FA' }]}>Обновить список</Text>
                   </TouchableOpacity>
                 </View>
                 )
@@ -787,13 +787,13 @@ const FriendsScreen = ({ navigation }) => {
         </TouchableOpacity>
         
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'search' && styles.activeTab, activeTab === 'search' && { backgroundColor: 'rgba(255, 149, 0, 0.1)', borderBottomColor: '#FF9500' }]}
+          style={[styles.tab, activeTab === 'search' && styles.activeTab, activeTab === 'search' && { backgroundColor: 'rgba(96, 165, 250, 0.15)', borderBottomColor: '#60A5FA' }]}
           onPress={() => setActiveTab('search')}
         >
           <Ionicons 
             name="search" 
             size={20} 
-            color={activeTab === 'search' ? '#FF9500' : theme.textSecondary} 
+            color={activeTab === 'search' ? '#60A5FA' : theme.textSecondary} 
           />
           <Text 
             style={[
@@ -856,7 +856,7 @@ const FriendsScreen = ({ navigation }) => {
             <View style={styles.sheetButtons}>
               <TouchableOpacity style={styles.optionButton} onPress={handleOpenChat}>
                 <View style={[styles.optionIconWrapper, { backgroundColor: 'rgba(102, 126, 234, 0.12)' }]}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={22} color="#667eea" />
+                  <Ionicons name="chatbubble-ellipses-outline" size={22} color="#60A5FA" />
                 </View>
                 <View style={styles.optionInfo}>
                   <Text style={[styles.optionText, { color: theme.text }]}>Написать сообщение</Text>

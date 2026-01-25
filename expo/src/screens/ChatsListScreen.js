@@ -27,11 +27,13 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../contexts/ThemeContext';
+import { useBackgroundImage } from '../contexts/BackgroundImageContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 
 const ChatsListScreen = ({ navigation }) => {
   const { theme } = useTheme();
+  const { setBackgroundImage } = useBackgroundImage();
   const insets = useSafeAreaInsets();
   const [chats, setChats] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -1266,6 +1268,14 @@ const ChatsListScreen = ({ navigation }) => {
       console.log('📱 ChatsListScreen: Вернулись на экран');
       setActiveChatId(null);
       
+      // Восстанавливаем фоновое изображение если оно было установлено
+      if (chatsListBackground === 'custom' && chatsListBackgroundImage) {
+        setBackgroundImage(chatsListBackgroundImage);
+      }
+      
+      // Перезагружаем друзей при возврате на экран
+      loadFriends();
+      
       // ⚡ НЕ перезагружаем полностью!
       // Socket события уже обновляют данные в реальном времени:
       // - new_message
@@ -1274,7 +1284,7 @@ const ChatsListScreen = ({ navigation }) => {
       // Полная загрузка происходит только:
       // 1. При первом монтировании компонента (useEffect)
       // 2. При pull-to-refresh (RefreshControl)
-    }, [])  // ← Пустые зависимости - без перезагрузки!
+    }, [chatsListBackground, chatsListBackgroundImage, setBackgroundImage])  // ← Зависимости для отслеживания изображения
   );
 
   // ✅ Присоединяемся к комнатам групп когда они загружены
@@ -1344,8 +1354,11 @@ const ChatsListScreen = ({ navigation }) => {
       if (data.success && data.image) {
         if (data.image.startsWith('data:')) {
           setChatsListBackgroundImage(data.image);
+          setBackgroundImage(data.image);
         } else {
-          setChatsListBackgroundImage(`data:image/jpeg;base64,${data.image}`);
+          const imageUrl = `data:image/jpeg;base64,${data.image}`;
+          setChatsListBackgroundImage(imageUrl);
+          setBackgroundImage(imageUrl);
         }
       }
     } catch (err) {
@@ -1368,6 +1381,7 @@ const ChatsListScreen = ({ navigation }) => {
       
       setChatsListBackground(backgroundType);
       setChatsListBackgroundImage(null);
+      setBackgroundImage(null);
       setBackgroundModalVisible(false);
     } catch (err) {
       Alert.alert('Ошибка', 'Не удалось сменить фон');
@@ -1411,6 +1425,7 @@ const ChatsListScreen = ({ navigation }) => {
         if (data.success) {
           setChatsListBackground('custom');
           setChatsListBackgroundImage(base64Image);
+          setBackgroundImage(base64Image);
           setBackgroundModalVisible(false);
         } else {
           Alert.alert('Ошибка', data.error || 'Не удалось загрузить изображение');
@@ -1434,6 +1449,7 @@ const ChatsListScreen = ({ navigation }) => {
       
       setChatsListBackground('default');
       setChatsListBackgroundImage(null);
+      setBackgroundImage(null);
       setBackgroundModalVisible(false);
     } catch (err) {
       Alert.alert('Ошибка', 'Не удалось сбросить фон');
@@ -1975,7 +1991,7 @@ const ChatsListScreen = ({ navigation }) => {
         ) : (
           <View style={[
             styles.avatarPlaceholder,
-            item.type === 'group' && { backgroundColor: '#667eea' }
+            item.type === 'group' && { backgroundColor: '#60A5FA' }
           ]}>
             <Text style={styles.avatarText}>
               {(item.username || item.name)[0].toUpperCase()}
@@ -2151,7 +2167,7 @@ const ChatsListScreen = ({ navigation }) => {
             filterItems(groups)
           }
           renderItem={renderChat}
-          keyExtractor={(item) => `${item.type}-${item.id}`}
+          keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
           onScroll={handleScroll}
           scrollEventThrottle={16}
           refreshControl={
@@ -2600,7 +2616,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2663,7 +2679,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
   },
   unreadBadge: {
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
     borderRadius: 12,
     minWidth: 24,
     height: 24,

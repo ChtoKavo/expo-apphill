@@ -54,19 +54,19 @@ const TypingIndicator = ({ theme, userName = 'Пользователь', isHeade
           <Animated.View
             style={[
               styles.dot,
-              { transform: [{ translateY: dot1 }], backgroundColor: theme?.primary || '#667eea' }
+              { transform: [{ translateY: dot1 }], backgroundColor: theme?.primary || '#60A5FA' }
             ]}
           />
           <Animated.View
             style={[
               styles.dot,
-              { transform: [{ translateY: dot2 }], backgroundColor: theme?.primary || '#667eea' }
+              { transform: [{ translateY: dot2 }], backgroundColor: theme?.primary || '#60A5FA' }
             ]}
           />
           <Animated.View
             style={[
               styles.dot,
-              { transform: [{ translateY: dot3 }], backgroundColor: theme?.primary || '#667eea' }
+              { transform: [{ translateY: dot3 }], backgroundColor: theme?.primary || '#60A5FA' }
             ]}
           />
         </View>

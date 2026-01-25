@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#667eea',
+    backgroundColor: '#60A5FA',
   },
   sendButtonDisabled: {
     opacity: 0.6,

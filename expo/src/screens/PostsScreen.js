@@ -1064,17 +1064,29 @@ const PostsScreen = ({ navigation }) => {
     ]}>
       <ScrollView showsVerticalScrollIndicator={false} style={styles.sidebarContent}>
         {/* ДЕЙСТВИЯ СЕКЦИЯ - ВВЕРХУ */}
-        <View style={[styles.sidebarSection, { marginBottom: 20 }]}>
+        <View style={[styles.sidebarSection, { marginBottom: 24 }]}>
           {/* Создать пост */}
           <TouchableOpacity 
-            style={[styles.sidebarItem, { backgroundColor: theme.primary, borderRadius: 12, marginBottom: 12 }]}
+            style={[styles.sidebarItem, { 
+              backgroundColor: theme.primary,
+              borderRadius: 14,
+              marginBottom: 0,
+              marginHorizontal: 10,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              elevation: 4,
+              shadowColor: theme.primary,
+              shadowOffset: { width: 0, height: 3 },
+              shadowOpacity: 0.3,
+              shadowRadius: 6,
+            }]}
             onPress={() => {
               setShowCreateModal(true);
               setShowHeaderMenu(false);
             }}
           >
-            <Ionicons name="add" size={20} color="#fff" />
-            <Text style={[styles.sidebarItemText, { color: '#fff', fontWeight: '700', marginLeft: 12 }]}>
+            <Ionicons name="add" size={22} color="#fff" />
+            <Text style={[styles.sidebarItemText, { color: '#fff', fontWeight: '700', marginLeft: 8 }]}>
               Новый пост
             </Text>
           </TouchableOpacity>
@@ -1091,31 +1103,31 @@ const PostsScreen = ({ navigation }) => {
             onPress={loadAllPosts}
           >
             <Ionicons name="home" size={20} color={sortType === 'newest' ? theme.primary : theme.textSecondary} />
-            <Text style={[styles.sidebarItemText, { color: sortType === 'newest' ? theme.text : theme.textSecondary, fontWeight: sortType === 'newest' ? '700' : '500', marginLeft: 12 }]}>Главная</Text>
-            {sortType === 'newest' && <Ionicons name="checkmark-circle" size={16} color={theme.primary} />}
+            <Text style={[styles.sidebarItemText, { color: sortType === 'newest' ? theme.text : theme.textSecondary, fontWeight: sortType === 'newest' ? '700' : '600', marginLeft: 8 }]}>Главная</Text>
+            {sortType === 'newest' && <Ionicons name="checkmark-circle" size={18} color={theme.primary} style={{ marginLeft: 'auto' }} />}
           </TouchableOpacity>
           
           <TouchableOpacity 
-            style={[styles.sidebarItem, sortType === 'popular' && { backgroundColor: theme.primary + '15' }]}
+            style={[styles.sidebarItem, sortType === 'popular' && { backgroundColor: '#FF4500' + '15' }]}
             onPress={loadPopularPosts}
           >
             <Ionicons name="flame" size={20} color={sortType === 'popular' ? '#FF4500' : theme.textSecondary} />
-            <Text style={[styles.sidebarItemText, { color: sortType === 'popular' ? theme.text : theme.textSecondary, fontWeight: sortType === 'popular' ? '700' : '500', marginLeft: 12 }]}>Популярное</Text>
-            {sortType === 'popular' && <Ionicons name="checkmark-circle" size={16} color="#FF4500" />}
+            <Text style={[styles.sidebarItemText, { color: sortType === 'popular' ? theme.text : theme.textSecondary, fontWeight: sortType === 'popular' ? '700' : '600', marginLeft: 8 }]}>Популярное</Text>
+            {sortType === 'popular' && <Ionicons name="checkmark-circle" size={18} color="#FF4500" style={{ marginLeft: 'auto' }} />}
           </TouchableOpacity>
           
           <TouchableOpacity 
-            style={[styles.sidebarItem, sortType === 'trending' && { backgroundColor: theme.primary + '15' }]}
+            style={[styles.sidebarItem, sortType === 'trending' && { backgroundColor: '#3B82F6' + '15' }]}
             onPress={loadTrendingPosts}
           >
             <Ionicons name="trending-up" size={20} color={sortType === 'trending' ? '#3B82F6' : theme.textSecondary} />
-            <Text style={[styles.sidebarItemText, { color: sortType === 'trending' ? theme.text : theme.textSecondary, fontWeight: sortType === 'trending' ? '700' : '500', marginLeft: 12 }]}>Тренды</Text>
-            {sortType === 'trending' && <Ionicons name="checkmark-circle" size={16} color="#3B82F6" />}
+            <Text style={[styles.sidebarItemText, { color: sortType === 'trending' ? theme.text : theme.textSecondary, fontWeight: sortType === 'trending' ? '700' : '600', marginLeft: 8 }]}>Тренды</Text>
+            {sortType === 'trending' && <Ionicons name="checkmark-circle" size={18} color="#3B82F6" style={{ marginLeft: 'auto' }} />}
           </TouchableOpacity>
         </View>
 
         {/* ИНСТРУМЕНТЫ СЕКЦИЯ */}
-        <View style={[styles.sidebarSection, { marginTop: 12 }]}>
+        <View style={[styles.sidebarSection, { marginTop: 16 }]}>
           <View style={styles.sidebarSectionHeader}>
             <Text style={[styles.sidebarSectionTitle, { color: theme.textSecondary }]}>ИНСТРУМЕНТЫ</Text>
           </View>
@@ -1128,10 +1140,12 @@ const PostsScreen = ({ navigation }) => {
               setShowHeaderMenu(false);
             }}
           >
-            <Ionicons name="swap-vertical" size={18} color={theme.primary} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={{ width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="swap-vertical" size={20} color={theme.primary} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={[styles.sidebarItemText, { color: theme.text, fontWeight: '600' }]}>Сортировка</Text>
-              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 11, marginTop: 2 }]}>
+              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 12, marginTop: 2 }]}>
                 {sortType === 'newest' && 'Новые'}
                 {sortType === 'trending' && 'Тренды'}
                 {sortType === 'popular' && 'Популярные'}
@@ -1148,10 +1162,12 @@ const PostsScreen = ({ navigation }) => {
               setShowHeaderMenu(false);
             }}
           >
-            <Ionicons name="funnel" size={18} color={theme.primary} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={{ width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="funnel" size={20} color={theme.primary} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={[styles.sidebarItemText, { color: theme.text, fontWeight: '600' }]}>Фильтр</Text>
-              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 11, marginTop: 2 }]}>
+              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 12, marginTop: 2 }]}>
                 {filterType === 'all' && 'Все посты'}
                 {filterType === 'friends' && 'От друзей'}
               </Text>
@@ -1167,10 +1183,12 @@ const PostsScreen = ({ navigation }) => {
               setShowHeaderMenu(false);
             }}
           >
-            <Ionicons name="bookmark" size={18} color="#f59e0b" />
-            <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={{ width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="bookmark" size={20} color="#f59e0b" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={[styles.sidebarItemText, { color: theme.text, fontWeight: '600' }]}>Закладки</Text>
-              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 11, marginTop: 2 }]}>
+              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 12, marginTop: 2 }]}>
                 Ваши сохраненные
               </Text>
             </View>
@@ -1179,7 +1197,7 @@ const PostsScreen = ({ navigation }) => {
         </View>
 
         {/* СООБЩЕСТВА СЕКЦИЯ */}
-        <View style={[styles.sidebarSection, { marginTop: 12 }]}>
+        <View style={[styles.sidebarSection, { marginTop: 16 }]}>
           <View style={styles.sidebarSectionHeader}>
             <Text style={[styles.sidebarSectionTitle, { color: theme.textSecondary }]}>СООБЩЕСТВА</Text>
             <TouchableOpacity 
@@ -1187,22 +1205,27 @@ const PostsScreen = ({ navigation }) => {
                 navigation.navigate('Communities');
                 setShowHeaderMenu(false);
               }}
-              style={{ padding: 4 }}
+              style={{ 
+                padding: 6,
+                borderRadius: 8,
+              }}
             >
-              <Ionicons name="add-circle-outline" size={18} color={theme.primary} />
+              <Ionicons name="add-circle-outline" size={20} color={theme.primary} />
             </TouchableOpacity>
           </View>
 
           {/* Кнопка "Все сообщества" */}
           <TouchableOpacity 
-            style={[styles.sidebarItem, { marginBottom: 8 }]}
+            style={[styles.sidebarItem, { marginBottom: 10 }]}
             onPress={() => {
               navigation.navigate('Communities');
               setShowHeaderMenu(false);
             }}
           >
-            <Ionicons name="globe" size={18} color={theme.primary} />
-            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 12, fontWeight: '600' }]}>
+            <View style={{ width: 20, height: 20, justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="globe" size={20} color={theme.primary} />
+            </View>
+            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 8, fontWeight: '600' }]}>
               Все сообщества
             </Text>
             <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
@@ -1210,28 +1233,28 @@ const PostsScreen = ({ navigation }) => {
           
           <TouchableOpacity style={styles.sidebarItem}>
             <View style={[styles.sidebarCommunityIcon, { backgroundColor: '#FF4500' }]}>
-              <Text style={[styles.sidebarCommunityText, { color: '#fff', fontSize: 10, fontWeight: '700' }]}>р/</Text>
+              <Text style={[styles.sidebarCommunityText, { color: '#fff' }]}>р/</Text>
             </View>
-            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 12 }]}>р/Популярное</Text>
+            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 8 }]}>р/Популярное</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.sidebarItem}>
             <View style={[styles.sidebarCommunityIcon, { backgroundColor: '#3B82F6' }]}>
-              <Text style={[styles.sidebarCommunityText, { color: '#fff', fontSize: 10, fontWeight: '700' }]}>р/</Text>
+              <Text style={[styles.sidebarCommunityText, { color: '#fff' }]}>р/</Text>
             </View>
-            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 12 }]}>р/Вопросы</Text>
+            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 8 }]}>р/Вопросы</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.sidebarItem}>
             <View style={[styles.sidebarCommunityIcon, { backgroundColor: '#10B981' }]}>
-              <Text style={[styles.sidebarCommunityText, { color: '#fff', fontSize: 10, fontWeight: '700' }]}>р/</Text>
+              <Text style={[styles.sidebarCommunityText, { color: '#fff' }]}>р/</Text>
             </View>
-            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 12 }]}>р/Развлечение</Text>
+            <Text style={[styles.sidebarItemText, { color: theme.text, marginLeft: 8 }]}>р/Развлечение</Text>
           </TouchableOpacity>
         </View>
 
         {/* ДЕЙСТВИЯ СЕКЦИЯ */}
-        <View style={[styles.sidebarSection, { marginTop: 12, marginBottom: 20 }]}>
+        <View style={[styles.sidebarSection, { marginTop: 16, marginBottom: 20 }]}>
           <TouchableOpacity 
             style={styles.sidebarItem}
             onPress={() => {
@@ -1240,11 +1263,11 @@ const PostsScreen = ({ navigation }) => {
             }}
           >
             <View style={[styles.sidebarActionIcon, { backgroundColor: '#8B5CF6' }]}>
-              <Ionicons name="headset" size={18} color="#fff" />
+              <Ionicons name="headset" size={20} color="#fff" />
             </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={[styles.sidebarItemText, { color: theme.text, fontWeight: '600' }]}>Поддержка</Text>
-              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 11, marginTop: 2 }]}>Написать в поддержку</Text>
+              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 12, marginTop: 2 }]}>Написать в поддержку</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
           </TouchableOpacity>
@@ -1258,11 +1281,11 @@ const PostsScreen = ({ navigation }) => {
             }}
           >
             <View style={[styles.sidebarActionIcon, { backgroundColor: '#06B6D4' }]}>
-              <Ionicons name="chatbubbles" size={18} color="#fff" />
+              <Ionicons name="chatbubbles" size={20} color="#fff" />
             </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
+            <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={[styles.sidebarItemText, { color: theme.text, fontWeight: '600' }]}>Мои обращения</Text>
-              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 11, marginTop: 2 }]}>Просмотреть ответы</Text>
+              <Text style={[styles.sidebarItemText, { color: theme.textSecondary, fontSize: 12, marginTop: 2 }]}>Просмотреть ответы</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
           </TouchableOpacity>
@@ -1289,7 +1312,7 @@ const PostsScreen = ({ navigation }) => {
           <Ionicons 
             name={showHeaderMenu ? "close" : "menu"} 
             size={20} 
-            color={'#FF9500'} 
+            color={'#3B82F6'} 
           />
         </TouchableOpacity>
         
@@ -1297,13 +1320,13 @@ const PostsScreen = ({ navigation }) => {
         <View style={[styles.searchBox, { 
           flex: 1,
           marginHorizontal: 12,
-          borderColor: 'rgba(255, 149, 0, 0.15)',
-          backgroundColor: '#0f1f35',
+          borderColor: 'rgba(99, 102, 241, 0.2)',
+          backgroundColor: 'rgba(99, 102, 241, 0.08)',
         }]}>
-          <Ionicons name="search" size={16} color={'#FF9500'} />
+          <Ionicons name="search" size={14} color={'#6366F1'} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
-            placeholder="Поиск..."
+            placeholder="Поиск постов..."
             placeholderTextColor={theme.textSecondary}
             value={searchText}
             onChangeText={handleSearch}
@@ -1315,7 +1338,7 @@ const PostsScreen = ({ navigation }) => {
               setSearchText('');
               loadPosts();
             }}>
-              <Ionicons name="close-circle" size={16} color={'#FF9500'} />
+              <Ionicons name="close-circle" size={14} color={'#6366F1'} />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -2559,13 +2582,13 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'column',
-    backgroundColor: '#1a2e4a',
+    backgroundColor: 'transparent',
     borderBottomWidth: 1.5,
-    borderBottomColor: 'rgba(255, 149, 0, 0.15)',
+    borderBottomColor: 'rgba(96, 165, 250, 0.1)',
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 3,
     paddingTop: 14,
   },
@@ -2611,7 +2634,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#667eea',
+    backgroundColor: '#3B82F6',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -3702,8 +3725,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
-    paddingTop: 14,
-    paddingBottom: 12,
+    paddingTop: 4,
+    paddingBottom: 3,
   },
   headerTitleContainer: {
     flexDirection: 'row',
@@ -3720,11 +3743,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 149, 0, 0.15)',
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 149, 0, 0.3)',
+    borderColor: 'rgba(99, 102, 241, 0.2)',
     elevation: 3,
-    shadowColor: '#FF9500',
+    shadowColor: '#6366F1',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
@@ -3732,28 +3755,28 @@ const styles = StyleSheet.create({
   
   searchSection: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 4,
     gap: 8,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 48,
-    gap: 10,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 149, 0, 0.25)',
-    backgroundColor: 'rgba(31, 58, 97, 0.6)',
-    elevation: 4,
-    shadowColor: '#FF9500',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
+    borderRadius: 24,
+    paddingHorizontal: 12,
+    height: 40,
+    gap: 8,
+    borderWidth: 1.2,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+    backgroundColor: 'rgba(99, 102, 241, 0.06)',
+    elevation: 3,
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '500',
   },
   searchInfo: {
@@ -3938,93 +3961,117 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 280,
     zIndex: 50,
-    elevation: 5,
+    elevation: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    shadowOffset: { width: 4, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    borderRightWidth: 1.5,
+    borderRightColor: 'rgba(99, 102, 241, 0.1)',
   },
   sidebarContent: {
     flex: 1,
-    paddingTop: 16,
+    paddingTop: 24,
+    paddingBottom: 24,
   },
   sidebarSection: {
-    marginBottom: 20,
+    marginBottom: 28,
     paddingHorizontal: 0,
   },
   sidebarSectionHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginBottom: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   sidebarSectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
     textTransform: 'uppercase',
+    opacity: 0.65,
   },
   sidebarItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginHorizontal: 8,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginHorizontal: 10,
+    borderRadius: 12,
     gap: 12,
+    backgroundColor: 'transparent',
+    transition: 'background-color 200ms ease',
   },
   sidebarItemActive: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginHorizontal: 8,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginHorizontal: 10,
+    borderRadius: 12,
     gap: 12,
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
   },
   sidebarItemText: {
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: 0.1,
   },
   sidebarItemTextActive: {
     fontSize: 15,
     fontWeight: '700',
+    letterSpacing: 0.1,
   },
   sidebarCommunityIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
-  sidebarActionIcon: {
     width: 36,
     height: 36,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
+    fontWeight: 'bold',
+    fontSize: 11,
     elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 1.5 },
+    shadowOpacity: 0.15,
     shadowRadius: 3,
   },
+  sidebarActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
   sidebarCommunityText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   newBadge: {
     backgroundColor: '#FF4500',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     marginLeft: 'auto',
+    elevation: 2,
+    shadowColor: '#FF4500',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
   newBadgeText: {
     color: '#fff',
     fontSize: 10,
     fontWeight: '700',
+    letterSpacing: 0.3,
   },
   imagesGallery: {
     flexDirection: 'row',

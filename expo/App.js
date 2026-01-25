@@ -31,6 +31,7 @@ import { initializeOnlineStatus, disconnectOnlineStatus } from './src/services/o
 import { registerBackgroundFetch, unregisterBackgroundFetch } from './src/services/backgroundTasks';
 import { ThemeProvider } from './src/contexts/ThemeContext';
 import { ModalAlertProvider } from './src/contexts/ModalAlertContext';
+import { BackgroundImageProvider } from './src/contexts/BackgroundImageContext';
 import ReplyToNotificationModal from './src/components/ReplyToNotificationModal';
 
 const Stack = createStackNavigator();
@@ -166,7 +167,8 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <ModalAlertProvider>
+      <BackgroundImageProvider>
+        <ModalAlertProvider>
         {/* Скрываем статусбар приложения */}
         <StatusBar hidden />
         <NavigationContainer 
@@ -178,7 +180,12 @@ export default function App() {
         >
           <Stack.Navigator 
             initialRouteName={initialRoute} 
-            screenOptions={{ headerShown: false }}
+            screenOptions={{ 
+              headerShown: false,
+              cardStyle: { backgroundColor: 'transparent' },
+              animationEnabled: true,
+              animationTypeForReplace: initialRoute === 'Login' ? 'pop' : 'fade',
+            }}
           >
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
@@ -222,6 +229,7 @@ export default function App() {
           isSending={isSending}
         />
       </ModalAlertProvider>
+      </BackgroundImageProvider>
     </ThemeProvider>
   );
 }
